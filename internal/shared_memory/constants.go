@@ -9,7 +9,7 @@ const (
 
 // Data Sizes in bytes
 const (
-	PhysicsDataSize   = 740  // SPageFilePhysics
-	StaticDataSize    = 256  // SPageFileStatic
-	GraphicsDataSize  = 512  // SPageFileGraphic
+	PhysicsDataSize   = 800
+	StaticDataSize    = 784
+	GraphicsDataSize  = 1588
 )
