@@ -1,0 +1,66 @@
+services:
+  redpanda:
+    image: ${REDPANDA_IMAGE}
+    container_name: ${REDPANDA_CONTAINER_NAME}
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --smp=1
+      - --memory=1G
+      - --reserve-memory=0M
+      - --check=false
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:${REDPANDA_EXTERNAL_PORT}
+      - --advertise-kafka-addr=internal://redpanda:9092,external://${REDPANDA_EXTERNAL_HOST}:${REDPANDA_EXTERNAL_PORT}
+      - --pandaproxy-addr=internal://0.0.0.0:8082,external://0.0.0.0:${PANDAPROXY_EXTERNAL_PORT}
+      - --advertise-pandaproxy-addr=internal://redpanda:8082,external://${REDPANDA_EXTERNAL_HOST}:${PANDAPROXY_EXTERNAL_PORT}
+      - --schema-registry-addr=internal://0.0.0.0:8081,external://0.0.0.0:${SCHEMA_REGISTRY_EXTERNAL_PORT}
+    ports:
+      - "${REDPANDA_EXTERNAL_PORT}:${REDPANDA_EXTERNAL_PORT}"
+      - "${SCHEMA_REGISTRY_EXTERNAL_PORT}:${SCHEMA_REGISTRY_EXTERNAL_PORT}"
+      - "${PANDAPROXY_EXTERNAL_PORT}:${PANDAPROXY_EXTERNAL_PORT}"
+      - "${REDPANDA_ADMIN_EXTERNAL_PORT}:9644"
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+
+  redpanda-console:
+    image: ${REDPANDA_CONSOLE_IMAGE}
+    container_name: ${REDPANDA_CONSOLE_CONTAINER_NAME}
+    depends_on:
+      - redpanda
+    environment:
+      KAFKA_BROKERS: redpanda:9092
+      KAFKA_SCHEMAREGISTRY_ENABLED: "true"
+      KAFKA_SCHEMAREGISTRY_URLS: http://redpanda:8081
+    ports:
+      - "${REDPANDA_CONSOLE_EXTERNAL_PORT}:8080"
+
+  minio:
+    image: ${MINIO_IMAGE}
+    container_name: ${MINIO_CONTAINER_NAME}
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+    ports:
+      - "${MINIO_API_EXTERNAL_PORT}:9000"
+      - "${MINIO_CONSOLE_EXTERNAL_PORT}:9001"
+    volumes:
+      - minio-data:/data
+
+  minio-mc:
+    image: ${MINIO_MC_IMAGE}
+    container_name: ${MINIO_MC_CONTAINER_NAME}
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${MINIO_ACCESS_KEY} ${MINIO_SECRET_KEY};
+      mc mb -p local/${MINIO_BUCKET} || true;
+      mc anonymous set none local/${MINIO_BUCKET};
+      tail -f /dev/null
+      "
+
+volumes:
+  redpanda-data:
+  minio-data:
