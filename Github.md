@@ -137,17 +137,74 @@ Consumer (5 minutos):
 - No fechamento da janela, grava arquivo Avro no MinIO.
 - Commit de offset somente apos upload concluido com sucesso.
 
-## 7) Sistema de usuario no Producer
+## 7) Sistema de login e identidade por maquina no Producer
 
-Escopo simples (local):
+Objetivo:
 
-- Cadastro com `nome` e `username`.
-- Seletor de usuario ativo antes de iniciar captura.
-- Usuario ativo entra como metadado em todos os eventos.
+- Permitir autenticacao local/remota do operador antes da captura de telemetria.
+- Suportar multiplos usuarios ativos ao mesmo tempo em diferentes maquinas.
+- Enriquecer eventos Avro com o usuario correto por instancia de reader.
+- Manter trilha minima de seguranca (senha hasheada, sessao com expiracao, auditoria basica).
 
-Persistencia sugerida:
+### 7.1 Componentes
 
-- Arquivo local simples (`users.json`) ou BadgerDB em namespace separado.
+- `internal/auth` (regras de login, hash de senha, controle de sessao)
+- `internal/user` (cadastro e gestao de usuario ativo por maquina)
+- `internal/repository/postgres` (persistencia de usuarios, sessoes e ativos por maquina)
+- `internal/handler/api` (handlers e middleware de autenticacao)
+- `cmd/reader` (resolucao de identidade e cache local de `machine_id`)
+- `web/templates` (frontend server-side para login e gestao de usuario)
+
+### 7.2 Fluxo de autenticacao e ativacao
+
+1. Operador acessa `GET /login`.
+2. Frontend envia `POST /auth/login` com `username` e `password`.
+3. Backend valida credenciais no Postgres (senha hasheada).
+4. Backend cria sessao e devolve cookie HttpOnly + Secure (quando HTTPS ativo).
+5. Reader identifica sua instancia via `machine_id` persistido localmente.
+6. Operador escolhe usuario ativo para uma maquina em `POST /users/active` (`user_id` + `machine_id`).
+7. Reader consulta o usuario ativo da propria maquina e usa esse contexto para preencher eventos.
+
+### 7.3 Modelo de dados (PostgreSQL)
+
+Tabela `users`:
+
+- `id` (uuid, pk)
+- `username` (text, unique, not null)
+- `name` (text, not null)
+- `password_hash` (text, not null)
+- `role` (text, default `operator`)
+- `created_at`, `updated_at` (timestamptz)
+
+Tabela `user_sessions`:
+
+- `id` (uuid, pk)
+- `user_id` (uuid, fk -> users.id)
+- `token_hash` (text, not null)
+- `expires_at` (timestamptz, not null)
+- `created_at` (timestamptz)
+
+Tabela `active_users`:
+
+- `machine_id` (text, pk)
+- `user_id` (uuid, fk -> users.id)
+- `updated_at` (timestamptz, not null)
+
+
+### 7.4 Regras de seguranca
+
+- Nunca persistir senha em texto puro.
+- Usar `bcrypt` (custo configuravel) ou `argon2id` para hash de senha.
+- Guardar apenas hash do token de sessao (nao token puro).
+- Expirar sessao por tempo e invalidar no logout.
+- Aplicar limite de tentativa de login por IP/usuario.
+
+### 7.5 Integracao com pipeline
+
+- O reader resolve identidade por prioridade: flags manuais -> ativo por `machine_id` -> fallback.
+- `machine_id` e persistido localmente para estabilidade entre reinicios.
+- Cada maquina pode operar com usuario diferente sem sobrescrever estado global.
+- Metadados no envelope Avro continuam padronizados (`usuario_id`, `username`, `event_time`, `ingestion_time`).
 
 ## 8) Particionamento e chaveamento
 
@@ -234,6 +291,7 @@ Bibliotecas principais do producer:
 - `github.com/twmb/franz-go` (cliente Kafka para Redpanda)
 - `github.com/hamba/avro/v2` (serializacao Avro)
 - `github.com/dgraph-io/badger/v4` (buffer local resiliente)
+- `github.com/jackc/pgx/v5` e `github.com/jmoiron/sqlx` (acesso PostgreSQL)
 - `github.com/spf13/cobra` e `github.com/spf13/viper` (CLI e configuracao)
 - `go.uber.org/zap` (logging)
 - `github.com/google/uuid` (identificadores)
@@ -259,6 +317,7 @@ Servicos inclusos:
 - Redpanda Console
 - MinIO
 - MinIO client (`mc`) para criar bucket `datalake-bronze`
+- PostgreSQL (persistencia de login, usuarios e ativo por maquina)
 
 ### 13.3 Variaveis de ambiente
 
@@ -271,8 +330,10 @@ Inclui:
 - Endpoints Redpanda e Schema Registry
 - Nomes dos topicos
 - Credenciais e endpoint do MinIO
+- Configuracao do PostgreSQL e `DATABASE_URL`
+- Variaveis para identidade de maquina no reader (ex.: `ACCDP_MACHINE_ID`, `ACCDP_MACHINE_ID_PATH`)
 - Janela do producer (1s) e consumer (5m)
-- Caminhos locais de usuarios e BadgerDB
+- Caminhos locais de BadgerDB
 
 ### 13.4 Comandos de bootstrap
 
