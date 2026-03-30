@@ -16,6 +16,7 @@ import (
 	"acc-dp/producer/internal/handler/api"
 	"acc-dp/producer/internal/repository/postgres"
 	"acc-dp/producer/internal/service/auth"
+	machinesvc "acc-dp/producer/internal/service/machine"
 	usersvc "acc-dp/producer/internal/service/user"
 )
 
@@ -57,8 +58,9 @@ func main() {
 
 	authService := auth.New(repo, *sessionTTL)
 	userService := usersvc.New(repo)
+	machineService := machinesvc.New(repo)
 
-	handler := api.NewServer(authService, userService, api.Config{
+	handler := api.NewServer(authService, userService, machineService, api.Config{
 		CookieName:   *cookieName,
 		CookieSecure: *cookieSecure,
 		CookieDomain: *cookieDomain,

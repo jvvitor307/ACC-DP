@@ -137,33 +137,37 @@ Consumer (5 minutos):
 - No fechamento da janela, grava arquivo Avro no MinIO.
 - Commit de offset somente apos upload concluido com sucesso.
 
-## 7) Sistema de login e identidade por maquina no Producer
+## 7) Sistema de login, registro central de maquinas e identidade no Producer
 
 Objetivo:
 
 - Permitir autenticacao local/remota do operador antes da captura de telemetria.
+- Centralizar no backend a emissao e governanca de identidade de maquina.
 - Suportar multiplos usuarios ativos ao mesmo tempo em diferentes maquinas.
+- Evitar colisao de `machine_id` entre equipamentos distintos.
 - Enriquecer eventos Avro com o usuario correto por instancia de reader.
-- Manter trilha minima de seguranca (senha hasheada, sessao com expiracao, auditoria basica).
+- Manter trilha minima de seguranca (senha hasheada, sessao com expiracao, token de maquina e auditoria basica).
 
 ### 7.1 Componentes
 
 - `internal/auth` (regras de login, hash de senha, controle de sessao)
 - `internal/user` (cadastro e gestao de usuario ativo por maquina)
-- `internal/repository/postgres` (persistencia de usuarios, sessoes e ativos por maquina)
+- `internal/machine` (registro, renovacao e revogacao de identidade de maquina)
+- `internal/repository/postgres` (persistencia de usuarios, sessoes, maquinas e ativos por maquina)
 - `internal/handler/api` (handlers e middleware de autenticacao)
-- `cmd/reader` (resolucao de identidade e cache local de `machine_id`)
+- `cmd/reader` (resolucao de identidade e cache local de credenciais de maquina)
 - `web/templates` (frontend server-side para login e gestao de usuario)
 
-### 7.2 Fluxo de autenticacao e ativacao
+### 7.2 Fluxo de autenticacao, registro de maquina e ativacao
 
-1. Operador acessa `GET /login`.
-2. Frontend envia `POST /auth/login` com `username` e `password`.
-3. Backend valida credenciais no Postgres (senha hasheada).
-4. Backend cria sessao e devolve cookie HttpOnly + Secure (quando HTTPS ativo).
-5. Reader identifica sua instancia via `machine_id` persistido localmente.
-6. Operador escolhe usuario ativo para uma maquina em `POST /users/active` (`user_id` + `machine_id`).
-7. Reader consulta o usuario ativo da propria maquina e usa esse contexto para preencher eventos.
+1. Reader inicia e tenta carregar credenciais locais (`machine_id` + `machine_token`).
+2. Se nao existir credencial local valida, reader chama `POST /machines/register`.
+3. Backend gera `machine_id` canonico (unico), `machine_token` inicial e persiste a maquina.
+4. Reader salva credenciais localmente e passa a autenticar como maquina.
+5. Operador acessa `GET /login` e autentica em `POST /auth/login`.
+6. Operador escolhe usuario ativo da maquina em `POST /machines/{machine_id}/active-user`.
+7. Reader consulta `GET /machines/me/active-user` para recuperar identidade de captura.
+8. Reader enriquece os eventos com o usuario ativo da propria maquina.
 
 ### 7.3 Modelo de dados (PostgreSQL)
 
@@ -184,11 +188,26 @@ Tabela `user_sessions`:
 - `expires_at` (timestamptz, not null)
 - `created_at` (timestamptz)
 
+Tabela `machines`:
+
+- `id` (uuid, pk) - representa o `machine_id` oficial
+- `name` (text, null) - apelido/hostname amigavel
+- `fingerprint_hash` (text, unique, null) - assinatura de hardware/software
+- `token_hash` (text, unique, not null) - hash do segredo da maquina
+- `status` (text, default `active`)
+- `created_at`, `updated_at`, `last_seen_at` (timestamptz)
+
 Tabela `active_users`:
 
-- `machine_id` (text, pk)
+- `machine_id` (uuid, pk, fk -> machines.id)
 - `user_id` (uuid, fk -> users.id)
 - `updated_at` (timestamptz, not null)
+
+Garantias de integridade esperadas:
+
+- `machine_id` emitido e controlado apenas pelo backend.
+- `token_hash` unico por maquina para evitar clonagem de identidade.
+- Uma maquina possui no maximo um usuario ativo por vez (pk em `active_users.machine_id`).
 
 
 ### 7.4 Regras de seguranca
@@ -196,15 +215,27 @@ Tabela `active_users`:
 - Nunca persistir senha em texto puro.
 - Usar `bcrypt` (custo configuravel) ou `argon2id` para hash de senha.
 - Guardar apenas hash do token de sessao (nao token puro).
+- Guardar apenas hash do token da maquina (nao token puro).
 - Expirar sessao por tempo e invalidar no logout.
+- Permitir revogacao/rotacao de credencial de maquina no backend.
 - Aplicar limite de tentativa de login por IP/usuario.
 
 ### 7.5 Integracao com pipeline
 
-- O reader resolve identidade por prioridade: flags manuais -> ativo por `machine_id` -> fallback.
-- `machine_id` e persistido localmente para estabilidade entre reinicios.
+- O reader resolve identidade por prioridade: flags manuais (debug) -> credencial local de maquina -> backend.
+- `machine_id` e `machine_token` sao persistidos localmente para estabilidade entre reinicios.
+- Sem usuario ativo para a maquina, o reader deve falhar de forma explicita (evita dados sem dono).
 - Cada maquina pode operar com usuario diferente sem sobrescrever estado global.
 - Metadados no envelope Avro continuam padronizados (`usuario_id`, `username`, `event_time`, `ingestion_time`).
+
+### 7.6 Endpoints de maquina
+
+- `POST /machines/register` (registrar maquina e emitir credenciais)
+- `POST /machines/heartbeat` (atualizar `last_seen_at` e saude da maquina)
+- `GET /machines/me` (retornar identidade da maquina autenticada)
+- `POST /machines/{machine_id}/active-user` (vincular usuario ativo a maquina)
+- `GET /machines/me/active-user` (consultar usuario ativo da maquina)
+- `GET /machines` (listagem administrativa de maquinas)
 
 ## 8) Particionamento e chaveamento
 
@@ -240,6 +271,7 @@ acc-data-platform/
 			broker/redpanda/
 			batch/
 			buffer/badger/
+			machine/
 			user/
 		schemas/
 			acc_physics.avsc
@@ -267,7 +299,7 @@ acc-data-platform/
 2. Publicar 3 topicos Avro no Redpanda com batch de 1s.
 3. Registrar schemas no Schema Registry com compatibilidade backward.
 4. Consumir e gravar Avro no MinIO em janela de 5min, com path particionado.
-5. Implementar cadastro/selecao simples de usuario no producer.
+5. Implementar cadastro/selecao de usuario com registro central de maquina no backend.
 6. Ativar fallback de envio com BadgerDB no producer.
 
 ## 12) Evolucao depois do MVP
@@ -317,7 +349,7 @@ Servicos inclusos:
 - Redpanda Console
 - MinIO
 - MinIO client (`mc`) para criar bucket `datalake-bronze`
-- PostgreSQL (persistencia de login, usuarios e ativo por maquina)
+- PostgreSQL (persistencia de login, usuarios, registro de maquinas e ativo por maquina)
 
 ### 13.3 Variaveis de ambiente
 
@@ -331,7 +363,7 @@ Inclui:
 - Nomes dos topicos
 - Credenciais e endpoint do MinIO
 - Configuracao do PostgreSQL e `DATABASE_URL`
-- Variaveis para identidade de maquina no reader (ex.: `ACCDP_MACHINE_ID`, `ACCDP_MACHINE_ID_PATH`)
+- Variaveis para credenciais de maquina no reader (ex.: `ACCDP_MACHINE_ID_PATH`, `ACCDP_MACHINE_TOKEN_PATH`)
 - Janela do producer (1s) e consumer (5m)
 - Caminhos locais de BadgerDB
 

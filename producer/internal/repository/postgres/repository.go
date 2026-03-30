@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	domainmachine "acc-dp/producer/internal/domain/machine"
+
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
@@ -14,7 +16,10 @@ import (
 	domainuser "acc-dp/producer/internal/domain/user"
 )
 
-var ErrNotFound = errors.New("not found")
+var (
+	ErrNotFound = errors.New("not found")
+	ErrConflict = errors.New("conflict")
+)
 
 type Repository struct {
 	db *sqlx.DB
@@ -63,6 +68,17 @@ func (r *Repository) RunMigrations(ctx context.Context) error {
 			created_at TIMESTAMPTZ NOT NULL
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_user_sessions_expires_at ON user_sessions (expires_at);`,
+		`CREATE TABLE IF NOT EXISTS machines (
+			id TEXT PRIMARY KEY,
+			name TEXT,
+			fingerprint_hash TEXT UNIQUE,
+			token_hash TEXT NOT NULL UNIQUE,
+			status TEXT NOT NULL DEFAULT 'active',
+			created_at TIMESTAMPTZ NOT NULL,
+			updated_at TIMESTAMPTZ NOT NULL,
+			last_seen_at TIMESTAMPTZ NOT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_machines_last_seen_at ON machines (last_seen_at);`,
 		`CREATE TABLE IF NOT EXISTS active_users (
 			machine_id TEXT PRIMARY KEY,
 			user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -77,6 +93,134 @@ func (r *Repository) RunMigrations(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (r *Repository) CreateMachine(ctx context.Context, machine *domainmachine.Machine) (*domainmachine.Machine, error) {
+	if machine == nil {
+		return nil, fmt.Errorf("create machine: machine is nil")
+	}
+
+	const query = `
+		INSERT INTO machines (id, name, fingerprint_hash, token_hash, status, created_at, updated_at, last_seen_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id, name, fingerprint_hash, token_hash, status, created_at, updated_at, last_seen_at;
+	`
+
+	created := &domainmachine.Machine{}
+	err := r.db.GetContext(
+		ctx,
+		created,
+		query,
+		machine.ID,
+		machine.Name,
+		machine.FingerprintHash,
+		machine.TokenHash,
+		machine.Status,
+		machine.CreatedAt,
+		machine.UpdatedAt,
+		machine.LastSeenAt,
+	)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return nil, ErrConflict
+		}
+		return nil, fmt.Errorf("create machine: %w", err)
+	}
+
+	return created, nil
+}
+
+func (r *Repository) GetMachineByID(ctx context.Context, machineID string) (*domainmachine.Machine, error) {
+	const query = `
+		SELECT id, name, fingerprint_hash, token_hash, status, created_at, updated_at, last_seen_at
+		FROM machines
+		WHERE id = $1;
+	`
+
+	machine := &domainmachine.Machine{}
+	if err := r.db.GetContext(ctx, machine, query, machineID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("get machine by id: %w", err)
+	}
+
+	return machine, nil
+}
+
+func (r *Repository) GetMachineByIDAndTokenHash(ctx context.Context, machineID string, tokenHash string) (*domainmachine.Machine, error) {
+	const query = `
+		SELECT id, name, fingerprint_hash, token_hash, status, created_at, updated_at, last_seen_at
+		FROM machines
+		WHERE id = $1 AND token_hash = $2;
+	`
+
+	machine := &domainmachine.Machine{}
+	if err := r.db.GetContext(ctx, machine, query, machineID, tokenHash); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("get machine by credentials: %w", err)
+	}
+
+	return machine, nil
+}
+
+func (r *Repository) GetMachineByFingerprintHash(ctx context.Context, fingerprintHash string) (*domainmachine.Machine, error) {
+	const query = `
+		SELECT id, name, fingerprint_hash, token_hash, status, created_at, updated_at, last_seen_at
+		FROM machines
+		WHERE fingerprint_hash = $1;
+	`
+
+	machine := &domainmachine.Machine{}
+	if err := r.db.GetContext(ctx, machine, query, fingerprintHash); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("get machine by fingerprint hash: %w", err)
+	}
+
+	return machine, nil
+}
+
+func (r *Repository) UpdateMachineLastSeen(ctx context.Context, machineID string, lastSeenAt time.Time) error {
+	const query = `
+		UPDATE machines
+		SET last_seen_at = $2, updated_at = $2
+		WHERE id = $1;
+	`
+
+	result, err := r.db.ExecContext(ctx, query, machineID, lastSeenAt)
+	if err != nil {
+		return fmt.Errorf("update machine last seen: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update machine last seen rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return ErrNotFound
+	}
+
+	return nil
+}
+
+func (r *Repository) ListMachines(ctx context.Context) ([]domainmachine.Machine, error) {
+	const query = `
+		SELECT id, name, fingerprint_hash, token_hash, status, created_at, updated_at, last_seen_at
+		FROM machines
+		ORDER BY created_at DESC;
+	`
+
+	machines := make([]domainmachine.Machine, 0)
+	if err := r.db.SelectContext(ctx, &machines, query); err != nil {
+		return nil, fmt.Errorf("list machines: %w", err)
+	}
+
+	return machines, nil
 }
 
 func (r *Repository) CreateUser(ctx context.Context, user *domainuser.User) (*domainuser.User, error) {
