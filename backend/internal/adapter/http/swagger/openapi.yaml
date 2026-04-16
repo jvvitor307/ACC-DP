@@ -1,0 +1,294 @@
+openapi: 3.0.3
+info:
+  title: ACC-DP Backend Auth API
+  version: 1.0.0
+  description: API de autenticacao com JWT e refresh token rotativo.
+servers:
+  - url: http://localhost:18088
+paths:
+  /healthz:
+    get:
+      summary: Health check
+      tags: [System]
+      responses:
+        '200':
+          description: API ativa
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+  /auth/register:
+    post:
+      summary: Registrar usuario
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Usuario criado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterResponse'
+        '400':
+          description: Payload invalido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Usuario ja existe
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /auth/login:
+    post:
+      summary: Login do usuario
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login realizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          description: Payload invalido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Credenciais invalidas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Machine ID nao corresponde
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /auth/refresh:
+    post:
+      summary: Renovar access token
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: Token renovado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefreshResponse'
+        '400':
+          description: Payload invalido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Refresh token invalido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Machine ID nao corresponde
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /auth/logout:
+    post:
+      summary: Encerrar sessao
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LogoutRequest'
+      responses:
+        '200':
+          description: Sessao encerrada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogoutResponse'
+        '400':
+          description: Payload invalido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Refresh token invalido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Machine ID nao corresponde
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+components:
+  schemas:
+    StatusResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+      required: [status]
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          example: invalid payload
+      required: [error]
+    RegisterRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          example: user@example.com
+        display_name:
+          type: string
+          example: User Name
+        password:
+          type: string
+          format: password
+          minLength: 8
+          example: strong-pass
+      required: [email, display_name, password]
+    RegisterResponse:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        display_name:
+          type: string
+      required: [user_id, email, display_name]
+    LoginRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          example: user@example.com
+        password:
+          type: string
+          format: password
+          example: strong-pass
+        machine_id:
+          type: string
+          example: machine-unique-id
+        device_name:
+          type: string
+          example: my-pc
+      required: [email, password, machine_id]
+    RefreshRequest:
+      type: object
+      properties:
+        refresh_token:
+          type: string
+          example: pAKnrVv3Yf9QmM5qF42a_dWsiTkjiPLKWC1Y4x0K9n8
+        machine_id:
+          type: string
+          example: machine-unique-id
+      required: [refresh_token, machine_id]
+    LogoutRequest:
+      type: object
+      properties:
+        refresh_token:
+          type: string
+        machine_id:
+          type: string
+      required: [refresh_token, machine_id]
+    Tokens:
+      type: object
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        token_type:
+          type: string
+          example: Bearer
+        expires_in:
+          type: integer
+          format: int64
+          example: 900
+      required: [access_token, refresh_token, token_type, expires_in]
+    LoginResponse:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        session_id:
+          type: string
+          format: uuid
+        machine_id:
+          type: string
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        token_type:
+          type: string
+        expires_in:
+          type: integer
+          format: int64
+      required: [user_id, session_id, machine_id, access_token, refresh_token, token_type, expires_in]
+    RefreshResponse:
+      type: object
+      properties:
+        session_id:
+          type: string
+          format: uuid
+        machine_id:
+          type: string
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        token_type:
+          type: string
+        expires_in:
+          type: integer
+          format: int64
+      required: [session_id, machine_id, access_token, refresh_token, token_type, expires_in]
+    LogoutResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: logged_out
+      required: [status]
