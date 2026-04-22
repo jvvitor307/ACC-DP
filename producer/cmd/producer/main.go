@@ -12,6 +12,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"acc-dp/producer/internal/batch"
 	"acc-dp/producer/internal/broker/redpanda"
 	"acc-dp/producer/internal/config"
 	"acc-dp/producer/internal/service/avro"
@@ -50,6 +51,7 @@ func run(ctx context.Context) error {
 	}()
 
 	logger.Info("starting producer",
+		zap.Duration("flush_interval", cfg.FlushInterval),
 		zap.Duration("physics_interval", cfg.PhysicsInterval),
 		zap.Duration("graphics_interval", cfg.GraphicsInterval),
 		zap.Duration("static_interval", cfg.StaticInterval),
@@ -92,6 +94,18 @@ func run(ctx context.Context) error {
 	}
 	defer closePublisher(logger, publisher)
 
+	adapter := batch.NewPublisherAdapter(publisher)
+	batcher, err := batch.New(adapter, batch.Config{
+		FlushInterval: cfg.FlushInterval,
+		Logger:        logger,
+	})
+	if err != nil {
+		return fmt.Errorf("create batcher: %w", err)
+	}
+
+	go batcher.Start(ctx)
+	defer batcher.Stop()
+
 	identity := normalizer.Identity{
 		UsuarioID: userID,
 		Username:  username,
@@ -99,14 +113,12 @@ func run(ctx context.Context) error {
 
 	err = runCaptureLoop(
 		ctx,
-		cfg.PhysicsInterval,
-		cfg.GraphicsInterval,
-		cfg.StaticInterval,
+		cfg,
 		logger,
 		reader,
 		normalizerService,
 		serializer,
-		publisher,
+		batcher,
 		identity,
 		schemaVersion,
 	)
@@ -152,36 +164,34 @@ func closePublisher(logger *zap.Logger, publisher *redpanda.Publisher) {
 
 func runCaptureLoop(
 	ctx context.Context,
-	physicsInterval time.Duration,
-	graphicsInterval time.Duration,
-	staticInterval time.Duration,
+	cfg config.Config,
 	logger *zap.Logger,
 	reader acc_shm.Reader,
 	normalizerService *normalizer.Service,
 	serializer *avro.Serializer,
-	publisher *redpanda.Publisher,
+	batcher *batch.Batcher,
 	identity normalizer.Identity,
 	schemaVersion int32,
 ) error {
-	physicsTicker := time.NewTicker(physicsInterval)
+	physicsTicker := time.NewTicker(cfg.PhysicsInterval)
 	defer physicsTicker.Stop()
 
-	graphicsTicker := time.NewTicker(graphicsInterval)
+	graphicsTicker := time.NewTicker(cfg.GraphicsInterval)
 	defer graphicsTicker.Stop()
 
-	staticTicker := time.NewTicker(staticInterval)
+	staticTicker := time.NewTicker(cfg.StaticInterval)
 	defer staticTicker.Stop()
 
 	capturePhysicsFn := func(runCtx context.Context) (int, error) {
-		return capturePhysics(runCtx, reader, normalizerService, serializer, publisher, identity, schemaVersion)
+		return capturePhysics(runCtx, reader, normalizerService, serializer, batcher, cfg.TopicPhysics, identity, schemaVersion)
 	}
 
 	captureGraphicsFn := func(runCtx context.Context) (int, error) {
-		return captureGraphics(runCtx, reader, normalizerService, serializer, publisher, identity, schemaVersion)
+		return captureGraphics(runCtx, reader, normalizerService, serializer, batcher, cfg.TopicGraphics, identity, schemaVersion)
 	}
 
 	captureStaticFn := func(runCtx context.Context) (int, error) {
-		return captureStatic(runCtx, reader, normalizerService, serializer, publisher, identity, schemaVersion)
+		return captureStatic(runCtx, reader, normalizerService, serializer, batcher, cfg.TopicStatic, identity, schemaVersion)
 	}
 
 	logger.Info("capture loop started")
@@ -251,7 +261,8 @@ func capturePhysics(
 	reader acc_shm.Reader,
 	normalizerService *normalizer.Service,
 	serializer *avro.Serializer,
-	publisher *redpanda.Publisher,
+	batcher *batch.Batcher,
+	topic string,
 	identity normalizer.Identity,
 	schemaVersion int32,
 ) (int, error) {
@@ -270,8 +281,12 @@ func capturePhysics(
 		return 0, fmt.Errorf("serialize physics: %w", err)
 	}
 
-	if err := publisher.PublishPhysics(ctx, event.EventID, payload); err != nil {
-		return 0, fmt.Errorf("publish physics: %w", err)
+	if err := batcher.Enqueue(batch.Message{
+		Topic:   topic,
+		Key:     event.EventID,
+		Payload: payload,
+	}); err != nil {
+		return 0, fmt.Errorf("enqueue physics: %w", err)
 	}
 
 	return len(payload), nil
@@ -282,7 +297,8 @@ func captureGraphics(
 	reader acc_shm.Reader,
 	normalizerService *normalizer.Service,
 	serializer *avro.Serializer,
-	publisher *redpanda.Publisher,
+	batcher *batch.Batcher,
+	topic string,
 	identity normalizer.Identity,
 	schemaVersion int32,
 ) (int, error) {
@@ -301,8 +317,12 @@ func captureGraphics(
 		return 0, fmt.Errorf("serialize graphics: %w", err)
 	}
 
-	if err := publisher.PublishGraphics(ctx, event.EventID, payload); err != nil {
-		return 0, fmt.Errorf("publish graphics: %w", err)
+	if err := batcher.Enqueue(batch.Message{
+		Topic:   topic,
+		Key:     event.EventID,
+		Payload: payload,
+	}); err != nil {
+		return 0, fmt.Errorf("enqueue graphics: %w", err)
 	}
 
 	return len(payload), nil
@@ -313,7 +333,8 @@ func captureStatic(
 	reader acc_shm.Reader,
 	normalizerService *normalizer.Service,
 	serializer *avro.Serializer,
-	publisher *redpanda.Publisher,
+	batcher *batch.Batcher,
+	topic string,
 	identity normalizer.Identity,
 	schemaVersion int32,
 ) (int, error) {
@@ -332,9 +353,14 @@ func captureStatic(
 		return 0, fmt.Errorf("serialize static: %w", err)
 	}
 
-	if err := publisher.PublishStatic(ctx, event.EventID, payload); err != nil {
-		return 0, fmt.Errorf("publish static: %w", err)
+	if err := batcher.Enqueue(batch.Message{
+		Topic:   topic,
+		Key:     event.EventID,
+		Payload: payload,
+	}); err != nil {
+		return 0, fmt.Errorf("enqueue static: %w", err)
 	}
 
 	return len(payload), nil
 }
+

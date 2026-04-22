@@ -28,6 +28,7 @@ type Config struct {
 	TopicGraphics     string
 	TopicStatic       string
 	SchemaRegistryURL string
+	FlushInterval     time.Duration
 	PhysicsInterval   time.Duration
 	GraphicsInterval  time.Duration
 	StaticInterval    time.Duration
@@ -45,6 +46,15 @@ func Load() (Config, error) {
 	brokers, err := parseBrokers(envValues["REDPANDA_BROKERS"])
 	if err != nil {
 		return Config{}, err
+	}
+
+	flushInterval, err := time.ParseDuration(envValues["PRODUCER_FLUSH_INTERVAL"])
+	if err != nil {
+		return Config{}, fmt.Errorf("parse PRODUCER_FLUSH_INTERVAL: %w", err)
+	}
+
+	if flushInterval <= 0 {
+		return Config{}, fmt.Errorf("PRODUCER_FLUSH_INTERVAL must be greater than zero")
 	}
 
 	physicsInterval, err := parseConfiguredInterval("PRODUCER_PHYSICS_INTERVAL", envValues["PRODUCER_FLUSH_INTERVAL"])
@@ -68,6 +78,7 @@ func Load() (Config, error) {
 		TopicGraphics:     envValues["TOPIC_GRAPHICS"],
 		TopicStatic:       envValues["TOPIC_STATIC"],
 		SchemaRegistryURL: envValues["SCHEMA_REGISTRY_URL"],
+		FlushInterval:     flushInterval,
 		PhysicsInterval:   physicsInterval,
 		GraphicsInterval:  graphicsInterval,
 		StaticInterval:    staticInterval,

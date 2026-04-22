@@ -51,8 +51,16 @@ type Config struct {
 	SchemaRegistryTimeout time.Duration
 }
 
+// BatchMessage represents a single message within a batch publish call.
+type BatchMessage struct {
+	Topic   string
+	Key     string
+	Payload []byte
+}
+
 type publisherClient interface {
 	Produce(ctx context.Context, topic string, key []byte, payload []byte) error
+	ProduceBatch(ctx context.Context, records []*kgo.Record) error
 	Close()
 }
 
@@ -155,6 +163,47 @@ func (p *Publisher) PublishStatic(ctx context.Context, key string, payload []byt
 	return p.publish(ctx, p.topics.Static, key, payload)
 }
 
+// PublishBatch publishes a slice of messages to a single topic in one
+// synchronous produce call. Each message payload is framed with the
+// topic's schema ID before sending.
+func (p *Publisher) PublishBatch(ctx context.Context, topic string, messages []BatchMessage) error {
+	if p == nil {
+		return fmt.Errorf("publish batch: publisher is nil")
+	}
+
+	if len(messages) == 0 {
+		return nil
+	}
+
+	schemaID, exists := p.schemaIDs[topic]
+	if !exists {
+		return fmt.Errorf("publish batch topic %s: schema id not configured", topic)
+	}
+
+	records := make([]*kgo.Record, 0, len(messages))
+	for _, msg := range messages {
+		framedPayload, err := framePayload(schemaID, msg.Payload)
+		if err != nil {
+			return fmt.Errorf("publish batch topic %s: %w", topic, err)
+		}
+
+		records = append(records, &kgo.Record{
+			Topic: topic,
+			Key:   []byte(msg.Key),
+			Value: framedPayload,
+		})
+	}
+
+	publishCtx, cancel := context.WithTimeout(ctx, p.publishTimeout)
+	defer cancel()
+
+	if err := p.client.ProduceBatch(publishCtx, records); err != nil {
+		return fmt.Errorf("publish batch topic %s: %w", topic, err)
+	}
+
+	return nil
+}
+
 func (p *Publisher) Close() {
 	if p == nil || p.client == nil {
 		return
@@ -237,6 +286,16 @@ func (c *franzClient) Produce(ctx context.Context, topic string, key []byte, pay
 		Key:   key,
 		Value: payload,
 	})
+
+	if err := results.FirstErr(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *franzClient) ProduceBatch(ctx context.Context, records []*kgo.Record) error {
+	results := c.client.ProduceSync(ctx, records...)
 
 	if err := results.FirstErr(); err != nil {
 		return err
