@@ -28,7 +28,9 @@ type Config struct {
 	TopicGraphics     string
 	TopicStatic       string
 	SchemaRegistryURL string
-	FlushInterval     time.Duration
+	PhysicsInterval   time.Duration
+	GraphicsInterval  time.Duration
+	StaticInterval    time.Duration
 	BadgerPath        string
 	UserStoragePath   string
 	LogLevel          string
@@ -45,13 +47,19 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
-	flushInterval, err := time.ParseDuration(envValues["PRODUCER_FLUSH_INTERVAL"])
+	physicsInterval, err := parseConfiguredInterval("PRODUCER_PHYSICS_INTERVAL", envValues["PRODUCER_FLUSH_INTERVAL"])
 	if err != nil {
-		return Config{}, fmt.Errorf("parse PRODUCER_FLUSH_INTERVAL: %w", err)
+		return Config{}, err
 	}
 
-	if flushInterval <= 0 {
-		return Config{}, fmt.Errorf("PRODUCER_FLUSH_INTERVAL must be greater than zero")
+	graphicsInterval, err := parseConfiguredInterval("PRODUCER_GRAPHICS_INTERVAL", envValues["PRODUCER_FLUSH_INTERVAL"])
+	if err != nil {
+		return Config{}, err
+	}
+
+	staticInterval, err := parseConfiguredInterval("PRODUCER_STATIC_INTERVAL", envValues["PRODUCER_FLUSH_INTERVAL"])
+	if err != nil {
+		return Config{}, err
 	}
 
 	return Config{
@@ -60,11 +68,28 @@ func Load() (Config, error) {
 		TopicGraphics:     envValues["TOPIC_GRAPHICS"],
 		TopicStatic:       envValues["TOPIC_STATIC"],
 		SchemaRegistryURL: envValues["SCHEMA_REGISTRY_URL"],
-		FlushInterval:     flushInterval,
+		PhysicsInterval:   physicsInterval,
+		GraphicsInterval:  graphicsInterval,
+		StaticInterval:    staticInterval,
 		BadgerPath:        envValues["BADGER_PATH"],
 		UserStoragePath:   envValues["USER_STORAGE_PATH"],
 		LogLevel:          getEnv("PRODUCER_LOG_LEVEL", defaultLogLevel),
 	}, nil
+}
+
+func parseConfiguredInterval(key, fallbackRaw string) (time.Duration, error) {
+	raw := getEnv(key, fallbackRaw)
+
+	interval, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("parse %s: %w", key, err)
+	}
+
+	if interval <= 0 {
+		return 0, fmt.Errorf("%s must be greater than zero", key)
+	}
+
+	return interval, nil
 }
 
 func readRequiredEnvs(keys []string) (map[string]string, error) {

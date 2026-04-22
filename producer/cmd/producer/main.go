@@ -50,7 +50,9 @@ func run(ctx context.Context) error {
 	}()
 
 	logger.Info("starting producer",
-		zap.Duration("flush_interval", cfg.FlushInterval),
+		zap.Duration("physics_interval", cfg.PhysicsInterval),
+		zap.Duration("graphics_interval", cfg.GraphicsInterval),
+		zap.Duration("static_interval", cfg.StaticInterval),
 		zap.String("log_level", cfg.LogLevel),
 	)
 
@@ -95,7 +97,19 @@ func run(ctx context.Context) error {
 		Username:  username,
 	}
 
-	err = runCaptureLoop(ctx, cfg.FlushInterval, logger, reader, normalizerService, serializer, publisher, identity, schemaVersion)
+	err = runCaptureLoop(
+		ctx,
+		cfg.PhysicsInterval,
+		cfg.GraphicsInterval,
+		cfg.StaticInterval,
+		logger,
+		reader,
+		normalizerService,
+		serializer,
+		publisher,
+		identity,
+		schemaVersion,
+	)
 	if err != nil && !errors.Is(err, context.Canceled) {
 		return fmt.Errorf("run capture loop: %w", err)
 	}
@@ -138,7 +152,9 @@ func closePublisher(logger *zap.Logger, publisher *redpanda.Publisher) {
 
 func runCaptureLoop(
 	ctx context.Context,
-	flushInterval time.Duration,
+	physicsInterval time.Duration,
+	graphicsInterval time.Duration,
+	staticInterval time.Duration,
 	logger *zap.Logger,
 	reader acc_shm.Reader,
 	normalizerService *normalizer.Service,
@@ -147,83 +163,84 @@ func runCaptureLoop(
 	identity normalizer.Identity,
 	schemaVersion int32,
 ) error {
-	ticker := time.NewTicker(flushInterval)
-	defer ticker.Stop()
+	physicsTicker := time.NewTicker(physicsInterval)
+	defer physicsTicker.Stop()
+
+	graphicsTicker := time.NewTicker(graphicsInterval)
+	defer graphicsTicker.Stop()
+
+	staticTicker := time.NewTicker(staticInterval)
+	defer staticTicker.Stop()
+
+	capturePhysicsFn := func(runCtx context.Context) (int, error) {
+		return capturePhysics(runCtx, reader, normalizerService, serializer, publisher, identity, schemaVersion)
+	}
+
+	captureGraphicsFn := func(runCtx context.Context) (int, error) {
+		return captureGraphics(runCtx, reader, normalizerService, serializer, publisher, identity, schemaVersion)
+	}
+
+	captureStaticFn := func(runCtx context.Context) (int, error) {
+		return captureStatic(runCtx, reader, normalizerService, serializer, publisher, identity, schemaVersion)
+	}
 
 	logger.Info("capture loop started")
 
-	for {
-		if err := captureCycle(ctx, logger, reader, normalizerService, serializer, publisher, identity, schemaVersion); err != nil {
-			if errors.Is(err, context.Canceled) {
-				return err
-			}
-			return fmt.Errorf("capture cycle: %w", err)
-		}
+	if err := captureAndLog(ctx, logger, "physics", capturePhysicsFn); err != nil {
+		return err
+	}
 
+	if err := captureAndLog(ctx, logger, "graphics", captureGraphicsFn); err != nil {
+		return err
+	}
+
+	if err := captureAndLog(ctx, logger, "static", captureStaticFn); err != nil {
+		return err
+	}
+
+	for {
 		select {
 		case <-ctx.Done():
 			logger.Info("shutdown signal received")
 			return ctx.Err()
-		case <-ticker.C:
+		case <-physicsTicker.C:
+			if err := captureAndLog(ctx, logger, "physics", capturePhysicsFn); err != nil {
+				return err
+			}
+		case <-graphicsTicker.C:
+			if err := captureAndLog(ctx, logger, "graphics", captureGraphicsFn); err != nil {
+				return err
+			}
+		case <-staticTicker.C:
+			if err := captureAndLog(ctx, logger, "static", captureStaticFn); err != nil {
+				return err
+			}
 		}
 	}
 }
 
-func captureCycle(
+func captureAndLog(
 	ctx context.Context,
 	logger *zap.Logger,
-	reader acc_shm.Reader,
-	normalizerService *normalizer.Service,
-	serializer *avro.Serializer,
-	publisher *redpanda.Publisher,
-	identity normalizer.Identity,
-	schemaVersion int32,
+	source string,
+	captureFn func(context.Context) (int, error),
 ) error {
-	cycleResult := struct {
-		physicsBytes  int
-		graphicsBytes int
-		staticBytes   int
-		failures      int
-	}{}
-
-	physicsBytes, err := capturePhysics(ctx, reader, normalizerService, serializer, publisher, identity, schemaVersion)
+	bytesRead, err := captureFn(ctx)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return err
 		}
-		cycleResult.failures++
-		logger.Warn("capture physics failed", zap.Error(err))
-	} else {
-		cycleResult.physicsBytes = physicsBytes
+
+		logger.Warn("capture failed",
+			zap.String("source", source),
+			zap.Error(err),
+		)
+		return nil
 	}
 
-	graphicsBytes, err := captureGraphics(ctx, reader, normalizerService, serializer, publisher, identity, schemaVersion)
-	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			return err
-		}
-		cycleResult.failures++
-		logger.Warn("capture graphics failed", zap.Error(err))
-	} else {
-		cycleResult.graphicsBytes = graphicsBytes
-	}
-
-	staticBytes, err := captureStatic(ctx, reader, normalizerService, serializer, publisher, identity, schemaVersion)
-	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			return err
-		}
-		cycleResult.failures++
-		logger.Warn("capture static failed", zap.Error(err))
-	} else {
-		cycleResult.staticBytes = staticBytes
-	}
-
-	logger.Info("capture cycle completed",
-		zap.Int("physics_bytes", cycleResult.physicsBytes),
-		zap.Int("graphics_bytes", cycleResult.graphicsBytes),
-		zap.Int("static_bytes", cycleResult.staticBytes),
-		zap.Int("failures", cycleResult.failures),
+	logger.Info("capture completed",
+		zap.String("source", source),
+		zap.Int("bytes", bytesRead),
 	)
 
 	return nil
