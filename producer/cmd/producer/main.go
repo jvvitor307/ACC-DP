@@ -12,6 +12,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"acc-dp/producer/internal/broker/redpanda"
 	"acc-dp/producer/internal/config"
 	"acc-dp/producer/internal/service/avro"
 	"acc-dp/producer/internal/service/normalizer"
@@ -65,12 +66,36 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("create serializer: %w", err)
 	}
 
+	eventSchemas, err := avro.BuildEventSchemas()
+	if err != nil {
+		return fmt.Errorf("build event schemas: %w", err)
+	}
+
+	publisher, err := redpanda.NewPublisher(redpanda.Config{
+		Brokers:           cfg.Brokers,
+		SchemaRegistryURL: cfg.SchemaRegistryURL,
+		Topics: redpanda.Topics{
+			Physics:  cfg.TopicPhysics,
+			Graphics: cfg.TopicGraphics,
+			Static:   cfg.TopicStatic,
+		},
+		Schemas: redpanda.Schemas{
+			Physics:  eventSchemas.Physics,
+			Graphics: eventSchemas.Graphics,
+			Static:   eventSchemas.Static,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("create redpanda publisher: %w", err)
+	}
+	defer closePublisher(logger, publisher)
+
 	identity := normalizer.Identity{
 		UsuarioID: userID,
 		Username:  username,
 	}
 
-	err = runCaptureLoop(ctx, cfg.FlushInterval, logger, reader, normalizerService, serializer, identity, schemaVersion)
+	err = runCaptureLoop(ctx, cfg.FlushInterval, logger, reader, normalizerService, serializer, publisher, identity, schemaVersion)
 	if err != nil && !errors.Is(err, context.Canceled) {
 		return fmt.Errorf("run capture loop: %w", err)
 	}
@@ -102,6 +127,15 @@ func closeReader(logger *zap.Logger, reader acc_shm.Reader) {
 	logger.Info("shared memory reader closed")
 }
 
+func closePublisher(logger *zap.Logger, publisher *redpanda.Publisher) {
+	if publisher == nil {
+		return
+	}
+
+	publisher.Close()
+	logger.Info("redpanda publisher closed")
+}
+
 func runCaptureLoop(
 	ctx context.Context,
 	flushInterval time.Duration,
@@ -109,6 +143,7 @@ func runCaptureLoop(
 	reader acc_shm.Reader,
 	normalizerService *normalizer.Service,
 	serializer *avro.Serializer,
+	publisher *redpanda.Publisher,
 	identity normalizer.Identity,
 	schemaVersion int32,
 ) error {
@@ -118,7 +153,7 @@ func runCaptureLoop(
 	logger.Info("capture loop started")
 
 	for {
-		if err := captureCycle(ctx, logger, reader, normalizerService, serializer, identity, schemaVersion); err != nil {
+		if err := captureCycle(ctx, logger, reader, normalizerService, serializer, publisher, identity, schemaVersion); err != nil {
 			if errors.Is(err, context.Canceled) {
 				return err
 			}
@@ -140,6 +175,7 @@ func captureCycle(
 	reader acc_shm.Reader,
 	normalizerService *normalizer.Service,
 	serializer *avro.Serializer,
+	publisher *redpanda.Publisher,
 	identity normalizer.Identity,
 	schemaVersion int32,
 ) error {
@@ -150,7 +186,7 @@ func captureCycle(
 		failures      int
 	}{}
 
-	physicsBytes, err := capturePhysics(ctx, reader, normalizerService, serializer, identity, schemaVersion)
+	physicsBytes, err := capturePhysics(ctx, reader, normalizerService, serializer, publisher, identity, schemaVersion)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return err
@@ -161,7 +197,7 @@ func captureCycle(
 		cycleResult.physicsBytes = physicsBytes
 	}
 
-	graphicsBytes, err := captureGraphics(ctx, reader, normalizerService, serializer, identity, schemaVersion)
+	graphicsBytes, err := captureGraphics(ctx, reader, normalizerService, serializer, publisher, identity, schemaVersion)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return err
@@ -172,7 +208,7 @@ func captureCycle(
 		cycleResult.graphicsBytes = graphicsBytes
 	}
 
-	staticBytes, err := captureStatic(ctx, reader, normalizerService, serializer, identity, schemaVersion)
+	staticBytes, err := captureStatic(ctx, reader, normalizerService, serializer, publisher, identity, schemaVersion)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return err
@@ -198,6 +234,7 @@ func capturePhysics(
 	reader acc_shm.Reader,
 	normalizerService *normalizer.Service,
 	serializer *avro.Serializer,
+	publisher *redpanda.Publisher,
 	identity normalizer.Identity,
 	schemaVersion int32,
 ) (int, error) {
@@ -216,6 +253,10 @@ func capturePhysics(
 		return 0, fmt.Errorf("serialize physics: %w", err)
 	}
 
+	if err := publisher.PublishPhysics(ctx, event.EventID, payload); err != nil {
+		return 0, fmt.Errorf("publish physics: %w", err)
+	}
+
 	return len(payload), nil
 }
 
@@ -224,6 +265,7 @@ func captureGraphics(
 	reader acc_shm.Reader,
 	normalizerService *normalizer.Service,
 	serializer *avro.Serializer,
+	publisher *redpanda.Publisher,
 	identity normalizer.Identity,
 	schemaVersion int32,
 ) (int, error) {
@@ -242,6 +284,10 @@ func captureGraphics(
 		return 0, fmt.Errorf("serialize graphics: %w", err)
 	}
 
+	if err := publisher.PublishGraphics(ctx, event.EventID, payload); err != nil {
+		return 0, fmt.Errorf("publish graphics: %w", err)
+	}
+
 	return len(payload), nil
 }
 
@@ -250,6 +296,7 @@ func captureStatic(
 	reader acc_shm.Reader,
 	normalizerService *normalizer.Service,
 	serializer *avro.Serializer,
+	publisher *redpanda.Publisher,
 	identity normalizer.Identity,
 	schemaVersion int32,
 ) (int, error) {
@@ -266,6 +313,10 @@ func captureStatic(
 	payload, err := serializer.SerializeStatic(event)
 	if err != nil {
 		return 0, fmt.Errorf("serialize static: %w", err)
+	}
+
+	if err := publisher.PublishStatic(ctx, event.EventID, payload); err != nil {
+		return 0, fmt.Errorf("publish static: %w", err)
 	}
 
 	return len(payload), nil

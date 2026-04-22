@@ -17,18 +17,33 @@ type Serializer struct {
 	staticSchema   avrolib.Schema
 }
 
+type EventSchemas struct {
+	Physics  string
+	Graphics string
+	Static   string
+}
+
+const (
+	physicsEventName    = "acc_physics_event"
+	graphicsEventName   = "acc_graphics_event"
+	staticEventName     = "acc_static_event"
+	physicsPayloadName  = "acc_physics_payload"
+	graphicsPayloadName = "acc_graphics_payload"
+	staticPayloadName   = "acc_static_payload"
+)
+
 func NewSerializer() (*Serializer, error) {
-	physicsSchema, err := parseEventSchema("acc_physics_event", "acc_physics_payload", reflect.TypeOf(acc_shm.PhysicsPage{}))
+	physicsSchema, err := parseEventSchema(physicsEventName, physicsPayloadName, reflect.TypeOf(acc_shm.PhysicsPage{}))
 	if err != nil {
 		return nil, fmt.Errorf("create serializer: %w", err)
 	}
 
-	graphicsSchema, err := parseEventSchema("acc_graphics_event", "acc_graphics_payload", reflect.TypeOf(acc_shm.GraphicsPage{}))
+	graphicsSchema, err := parseEventSchema(graphicsEventName, graphicsPayloadName, reflect.TypeOf(acc_shm.GraphicsPage{}))
 	if err != nil {
 		return nil, fmt.Errorf("create serializer: %w", err)
 	}
 
-	staticSchema, err := parseEventSchema("acc_static_event", "acc_static_payload", reflect.TypeOf(acc_shm.StaticPage{}))
+	staticSchema, err := parseEventSchema(staticEventName, staticPayloadName, reflect.TypeOf(acc_shm.StaticPage{}))
 	if err != nil {
 		return nil, fmt.Errorf("create serializer: %w", err)
 	}
@@ -92,6 +107,29 @@ func (s *Serializer) SerializeStatic(evt *event.StaticEvent) ([]byte, error) {
 	}
 
 	return payload, nil
+}
+
+func BuildEventSchemas() (EventSchemas, error) {
+	physicsSchema, err := buildEventSchema(physicsEventName, physicsPayloadName, reflect.TypeOf(acc_shm.PhysicsPage{}))
+	if err != nil {
+		return EventSchemas{}, fmt.Errorf("build physics event schema: %w", err)
+	}
+
+	graphicsSchema, err := buildEventSchema(graphicsEventName, graphicsPayloadName, reflect.TypeOf(acc_shm.GraphicsPage{}))
+	if err != nil {
+		return EventSchemas{}, fmt.Errorf("build graphics event schema: %w", err)
+	}
+
+	staticSchema, err := buildEventSchema(staticEventName, staticPayloadName, reflect.TypeOf(acc_shm.StaticPage{}))
+	if err != nil {
+		return EventSchemas{}, fmt.Errorf("build static event schema: %w", err)
+	}
+
+	return EventSchemas{
+		Physics:  physicsSchema,
+		Graphics: graphicsSchema,
+		Static:   staticSchema,
+	}, nil
 }
 
 func parseEventSchema(eventName, payloadName string, payloadType reflect.Type) (avrolib.Schema, error) {
