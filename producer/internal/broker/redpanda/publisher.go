@@ -66,6 +66,7 @@ type publisherClient interface {
 
 type schemaRegistryClient interface {
 	RegisterSchema(ctx context.Context, subject string, schema string) (int, error)
+	SetCompatibility(ctx context.Context, subject string, level string) error
 }
 
 type franzClient struct {
@@ -445,6 +446,10 @@ func registerTopicSchema(ctx context.Context, registryClient schemaRegistryClien
 		return 0, fmt.Errorf("register subject %s: %w", subject, err)
 	}
 
+	if err := registryClient.SetCompatibility(ctx, subject, "BACKWARD"); err != nil {
+		return 0, fmt.Errorf("set compatibility for subject %s: %w", subject, err)
+	}
+
 	return schemaID, nil
 }
 
@@ -513,4 +518,38 @@ func (c *schemaRegistryHTTPClient) RegisterSchema(ctx context.Context, subject s
 	}
 
 	return parsedResponse.ID, nil
+}
+
+func (c *schemaRegistryHTTPClient) SetCompatibility(ctx context.Context, subject string, level string) error {
+	if strings.TrimSpace(subject) == "" {
+		return fmt.Errorf("subject is required")
+	}
+
+	if strings.TrimSpace(level) == "" {
+		return fmt.Errorf("compatibility level is required")
+	}
+
+	requestBody := []byte(fmt.Sprintf(`{"compatibility": "%s"}`, level))
+	requestURL := fmt.Sprintf("%s/config/%s", c.baseURL, url.PathEscape(subject))
+	
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut, requestURL, bytes.NewReader(requestBody))
+	if err != nil {
+		return fmt.Errorf("create set compatibility request: %w", err)
+	}
+
+	request.Header.Set("Content-Type", schemaRegistryContentType)
+	request.Header.Set("Accept", schemaRegistryContentType)
+
+	response, err := c.client.Do(request)
+	if err != nil {
+		return fmt.Errorf("execute set compatibility request: %w", err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		responseBody, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+		return fmt.Errorf("set compatibility returned status %d: %s", response.StatusCode, strings.TrimSpace(string(responseBody)))
+	}
+
+	return nil
 }
