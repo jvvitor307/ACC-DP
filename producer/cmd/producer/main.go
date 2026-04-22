@@ -19,6 +19,7 @@ import (
 	"acc-dp/producer/internal/service/avro"
 	"acc-dp/producer/internal/service/normalizer"
 	"acc-dp/producer/internal/source/acc_shm"
+	"acc-dp/producer/internal/worker"
 )
 
 const (
@@ -116,6 +117,9 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("create batcher: %w", err)
 	}
+
+	retryWorker := worker.NewRetryWorker(adapter, localBuffer, logger)
+	go retryWorker.Start(ctx)
 
 	go batcher.Start(ctx)
 	defer batcher.Stop()
