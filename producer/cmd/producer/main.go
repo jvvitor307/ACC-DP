@@ -14,6 +14,7 @@ import (
 
 	"acc-dp/producer/internal/batch"
 	"acc-dp/producer/internal/broker/redpanda"
+	"acc-dp/producer/internal/buffer/badger"
 	"acc-dp/producer/internal/config"
 	"acc-dp/producer/internal/service/avro"
 	"acc-dp/producer/internal/service/normalizer"
@@ -94,10 +95,23 @@ func run(ctx context.Context) error {
 	}
 	defer closePublisher(logger, publisher)
 
+	localBuffer, err := badger.New(cfg.BadgerPath)
+	if err != nil {
+		return fmt.Errorf("create badger local buffer: %w", err)
+	}
+	defer func() {
+		if err := localBuffer.Close(); err != nil {
+			logger.Warn("close local buffer", zap.Error(err))
+		} else {
+			logger.Info("local buffer closed")
+		}
+	}()
+
 	adapter := batch.NewPublisherAdapter(publisher)
 	batcher, err := batch.New(adapter, batch.Config{
 		FlushInterval: cfg.FlushInterval,
 		Logger:        logger,
+		LocalBuffer:   localBuffer,
 	})
 	if err != nil {
 		return fmt.Errorf("create batcher: %w", err)

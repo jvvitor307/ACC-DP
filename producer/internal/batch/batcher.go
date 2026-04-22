@@ -21,10 +21,16 @@ type Publisher interface {
 	PublishBatch(ctx context.Context, topic string, messages []Message) error
 }
 
+// LocalBuffer defines the interface for persisting messages on publish failure.
+type LocalBuffer interface {
+	Append(topic string, key string, payload []byte) error
+}
+
 // Batcher accumulates messages grouped by topic and flushes them
 // at a configurable interval. It is safe for concurrent use.
 type Batcher struct {
 	publisher     Publisher
+	localBuffer   LocalBuffer
 	flushInterval time.Duration
 	logger        *zap.Logger
 
@@ -35,10 +41,10 @@ type Batcher struct {
 	closed chan struct{}
 }
 
-// Config holds the configuration for a Batcher.
 type Config struct {
 	FlushInterval time.Duration
 	Logger        *zap.Logger
+	LocalBuffer   LocalBuffer
 }
 
 // New creates a new Batcher. Call Start to begin the flush loop.
@@ -58,6 +64,7 @@ func New(publisher Publisher, cfg Config) (*Batcher, error) {
 
 	return &Batcher{
 		publisher:     publisher,
+		localBuffer:   cfg.LocalBuffer,
 		flushInterval: cfg.FlushInterval,
 		logger:        logger,
 		pending:       make(map[string][]Message),
@@ -161,10 +168,17 @@ func (b *Batcher) flush(ctx context.Context) {
 				zap.Error(err),
 			)
 
-			// Re-enqueue failed messages so they are retried on the next cycle.
-			b.mu.Lock()
-			b.pending[topic] = append(b.pending[topic], messages...)
-			b.mu.Unlock()
+			if b.localBuffer != nil {
+				for _, m := range messages {
+					if storeErr := b.localBuffer.Append(m.Topic, m.Key, m.Payload); storeErr != nil {
+						b.logger.Error("failed to persist message to local buffer",
+							zap.String("topic", m.Topic),
+							zap.String("key", m.Key),
+							zap.Error(storeErr),
+						)
+					}
+				}
+			}
 
 			continue
 		}
