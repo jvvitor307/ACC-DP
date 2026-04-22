@@ -301,7 +301,7 @@ func capturePhysics(
 
 	if err := batcher.Enqueue(batch.Message{
 		Topic:   topic,
-		Key:     event.EventID,
+		Key:     fmt.Sprintf("%s:%s", event.UsuarioID, event.EventID),
 		Payload: payload,
 	}); err != nil {
 		return 0, fmt.Errorf("enqueue physics: %w", err)
@@ -337,7 +337,7 @@ func captureGraphics(
 
 	if err := batcher.Enqueue(batch.Message{
 		Topic:   topic,
-		Key:     event.EventID,
+		Key:     fmt.Sprintf("%s:%s", event.UsuarioID, event.EventID),
 		Payload: payload,
 	}); err != nil {
 		return 0, fmt.Errorf("enqueue graphics: %w", err)
@@ -373,7 +373,7 @@ func captureStatic(
 
 	if err := batcher.Enqueue(batch.Message{
 		Topic:   topic,
-		Key:     event.EventID,
+		Key:     fmt.Sprintf("%s:%s", event.UsuarioID, event.EventID),
 		Payload: payload,
 	}); err != nil {
 		return 0, fmt.Errorf("enqueue static: %w", err)

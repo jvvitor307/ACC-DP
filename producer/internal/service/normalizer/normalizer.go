@@ -34,7 +34,7 @@ func (s *Service) NormalizePhysics(page *acc_shm.PhysicsPage, identity Identity,
 		return nil, fmt.Errorf("normalize physics: page is nil")
 	}
 
-	meta := s.newMetadata(identity, schemaVersion, PhysicsSource)
+	meta := s.newMetadata(identity, schemaVersion, PhysicsSource, fmt.Sprintf("%d", page.PacketID))
 
 	return &event.PhysicsEvent{
 		EventID:       meta.EventID,
@@ -53,7 +53,7 @@ func (s *Service) NormalizeGraphics(page *acc_shm.GraphicsPage, identity Identit
 		return nil, fmt.Errorf("normalize graphics: page is nil")
 	}
 
-	meta := s.newMetadata(identity, schemaVersion, GraphicsSource)
+	meta := s.newMetadata(identity, schemaVersion, GraphicsSource, fmt.Sprintf("%d", page.PacketID))
 
 	return &event.GraphicsEvent{
 		EventID:       meta.EventID,
@@ -72,7 +72,7 @@ func (s *Service) NormalizeStatic(page *acc_shm.StaticPage, identity Identity, s
 		return nil, fmt.Errorf("normalize static: page is nil")
 	}
 
-	meta := s.newMetadata(identity, schemaVersion, StaticSource)
+	meta := s.newMetadata(identity, schemaVersion, StaticSource, uuid.NewString())
 
 	return &event.StaticEvent{
 		EventID:       meta.EventID,
@@ -96,11 +96,11 @@ type metadata struct {
 	SchemaVersion int32
 }
 
-func (s *Service) newMetadata(identity Identity, schemaVersion int32, source string) metadata {
+func (s *Service) newMetadata(identity Identity, schemaVersion int32, source string, eventID string) metadata {
 	nowMillis := s.now().UnixMilli()
 
 	return metadata{
-		EventID:       uuid.NewString(),
+		EventID:       eventID,
 		EventTime:     nowMillis,
 		IngestionTime: nowMillis,
 		UsuarioID:     identity.UsuarioID,
