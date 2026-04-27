@@ -88,6 +88,20 @@ services:
     ports:
       - "${BACKEND_EXTERNAL_PORT}:8088"
 
+  redpanda-init:
+    image: ${REDPANDA_IMAGE}
+    container_name: ${REDPANDA_CONTAINER_NAME}-init
+    depends_on:
+      - redpanda
+    entrypoint: >
+      /bin/sh -c "
+      echo 'Waiting for Redpanda to be ready...';
+      until rpk cluster health --api-urls redpanda:9644 2>/dev/null | grep 'Healthy:.*true'; do sleep 2; done;
+      rpk topic create acc.physics.v1 acc.graphics.v1 acc.static.v1 --brokers redpanda:9092 || true;
+      echo 'Topics created.';
+      tail -f /dev/null
+      "
+
   minio-mc:
     image: ${MINIO_MC_IMAGE}
     container_name: ${MINIO_MC_CONTAINER_NAME}
