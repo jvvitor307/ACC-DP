@@ -14,9 +14,9 @@ import (
 )
 
 type Reader interface {
-	ReadPhysics(ctx context.Context) (*PhysicsPage, error)
-	ReadGraphics(ctx context.Context) (*GraphicsPage, error)
-	ReadStatic(ctx context.Context) (*StaticPage, error)
+	ReadPhysics(ctx context.Context) (*PhysicsRawPage, error)
+	ReadGraphics(ctx context.Context) (*GraphicsRawPage, error)
+	ReadStatic(ctx context.Context) (*StaticRawPage, error)
 	Close() error
 }
 
@@ -78,7 +78,7 @@ func NewSHMReader(ctx context.Context) (*SharedMemoryReader, error) {
 	return NewReader(ctx)
 }
 
-func (r *SharedMemoryReader) ReadPhysics(ctx context.Context) (*PhysicsPage, error) {
+func (r *SharedMemoryReader) ReadPhysics(ctx context.Context) (*PhysicsRawPage, error) {
 	data, err := r.readPage(ctx, &r.physics)
 	if err != nil {
 		return nil, fmt.Errorf("read physics page: %w", err)
@@ -92,7 +92,7 @@ func (r *SharedMemoryReader) ReadPhysics(ctx context.Context) (*PhysicsPage, err
 	return page, nil
 }
 
-func (r *SharedMemoryReader) ReadGraphics(ctx context.Context) (*GraphicsPage, error) {
+func (r *SharedMemoryReader) ReadGraphics(ctx context.Context) (*GraphicsRawPage, error) {
 	data, err := r.readPage(ctx, &r.graphics)
 	if err != nil {
 		return nil, fmt.Errorf("read graphics page: %w", err)
@@ -106,7 +106,7 @@ func (r *SharedMemoryReader) ReadGraphics(ctx context.Context) (*GraphicsPage, e
 	return page, nil
 }
 
-func (r *SharedMemoryReader) ReadStatic(ctx context.Context) (*StaticPage, error) {
+func (r *SharedMemoryReader) ReadStatic(ctx context.Context) (*StaticRawPage, error) {
 	data, err := r.readPage(ctx, &r.static)
 	if err != nil {
 		return nil, fmt.Errorf("read static page: %w", err)

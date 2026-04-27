@@ -284,10 +284,11 @@ func capturePhysics(
 	identity normalizer.Identity,
 	schemaVersion int32,
 ) (int, error) {
-	page, err := reader.ReadPhysics(ctx)
+	rawPage, err := reader.ReadPhysics(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("read physics: %w", err)
 	}
+	page := acc_shm.ToPhysicsPage(rawPage)
 
 	event, err := normalizerService.NormalizePhysics(page, identity, schemaVersion)
 	if err != nil {
@@ -320,10 +321,11 @@ func captureGraphics(
 	identity normalizer.Identity,
 	schemaVersion int32,
 ) (int, error) {
-	page, err := reader.ReadGraphics(ctx)
+	rawPage, err := reader.ReadGraphics(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("read graphics: %w", err)
 	}
+	page := acc_shm.ToGraphicsPage(rawPage)
 
 	event, err := normalizerService.NormalizeGraphics(page, identity, schemaVersion)
 	if err != nil {
@@ -356,11 +358,11 @@ func captureStatic(
 	identity normalizer.Identity,
 	schemaVersion int32,
 ) (int, error) {
-	page, err := reader.ReadStatic(ctx)
+	rawPage, err := reader.ReadStatic(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("read static: %w", err)
 	}
-
+	page := acc_shm.ToStaticPage(rawPage)
 	event, err := normalizerService.NormalizeStatic(page, identity, schemaVersion)
 	if err != nil {
 		return 0, fmt.Errorf("normalize static: %w", err)

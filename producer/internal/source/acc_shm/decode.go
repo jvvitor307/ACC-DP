@@ -6,8 +6,8 @@ import (
 	"unsafe"
 )
 
-func DecodePhysicsPage(data []byte) (*PhysicsPage, error) {
-	page, err := decodePage[PhysicsPage](data, PhysicsPageSize, ErrInvalidPhysicsSize)
+func DecodePhysicsPage(data []byte) (*PhysicsRawPage, error) {
+	page, err := decodePage[PhysicsRawPage](data, PhysicsPageSize, ErrInvalidPhysicsSize)
 	if err != nil {
 		return nil, fmt.Errorf("decode physics page: %w", err)
 	}
@@ -15,8 +15,8 @@ func DecodePhysicsPage(data []byte) (*PhysicsPage, error) {
 	return page, nil
 }
 
-func DecodeGraphicsPage(data []byte) (*GraphicsPage, error) {
-	page, err := decodePage[GraphicsPage](data, GraphicsPageSize, ErrInvalidGraphicsSize)
+func DecodeGraphicsPage(data []byte) (*GraphicsRawPage, error) {
+	page, err := decodePage[GraphicsRawPage](data, GraphicsPageSize, ErrInvalidGraphicsSize)
 	if err != nil {
 		return nil, fmt.Errorf("decode graphics page: %w", err)
 	}
@@ -24,8 +24,8 @@ func DecodeGraphicsPage(data []byte) (*GraphicsPage, error) {
 	return page, nil
 }
 
-func DecodeStaticPage(data []byte) (*StaticPage, error) {
-	page, err := decodePage[StaticPage](data, StaticPageSize, ErrInvalidStaticSize)
+func DecodeStaticPage(data []byte) (*StaticRawPage, error) {
+	page, err := decodePage[StaticRawPage](data, StaticPageSize, ErrInvalidStaticSize)
 	if err != nil {
 		return nil, fmt.Errorf("decode static page: %w", err)
 	}
@@ -50,17 +50,17 @@ func decodePage[T any](data []byte, expectedSize int, sizeErr error) (*T, error)
 }
 
 func validateTypeLayout() error {
-	physicsSize := int(unsafe.Sizeof(PhysicsPage{}))
+	physicsSize := int(unsafe.Sizeof(PhysicsRawPage{}))
 	if physicsSize != PhysicsPageSize {
 		return fmt.Errorf("physics page layout mismatch: got=%d want=%d", physicsSize, PhysicsPageSize)
 	}
 
-	graphicsSize := int(unsafe.Sizeof(GraphicsPage{}))
+	graphicsSize := int(unsafe.Sizeof(GraphicsRawPage{}))
 	if graphicsSize != GraphicsPageSize {
 		return fmt.Errorf("graphics page layout mismatch: got=%d want=%d", graphicsSize, GraphicsPageSize)
 	}
 
-	staticSize := int(unsafe.Sizeof(StaticPage{}))
+	staticSize := int(unsafe.Sizeof(StaticRawPage{}))
 	if staticSize != StaticPageSize {
 		return fmt.Errorf("static page layout mismatch: got=%d want=%d", staticSize, StaticPageSize)
 	}
