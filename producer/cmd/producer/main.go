@@ -65,7 +65,7 @@ func run(ctx context.Context) error {
 	}
 	defer closeReader(logger, reader)
 
-	normalizerService := normalizer.New()
+	normalizerService := normalizer.New(userID)
 	serializer, err := avro.NewSerializer()
 	if err != nil {
 		return fmt.Errorf("create serializer: %w", err)

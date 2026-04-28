@@ -6,6 +6,7 @@ type PhysicsEvent struct {
 	EventID       string              `avro:"event_id"`
 	EventTime     int64               `avro:"event_time"`
 	IngestionTime int64               `avro:"ingestion_time"`
+	SessionID     string              `avro:"session_id"`
 	UsuarioID     string              `avro:"usuario_id"`
 	Username      string              `avro:"username"`
 	Source        string              `avro:"source"`
@@ -16,6 +17,7 @@ type GraphicsEvent struct {
 	EventID       string               `avro:"event_id"`
 	EventTime     int64                `avro:"event_time"`
 	IngestionTime int64                `avro:"ingestion_time"`
+	SessionID     string               `avro:"session_id"`
 	UsuarioID     string               `avro:"usuario_id"`
 	Username      string               `avro:"username"`
 	Source        string               `avro:"source"`
@@ -26,8 +28,9 @@ type StaticEvent struct {
 	EventID       string             `avro:"event_id"`
 	EventTime     int64              `avro:"event_time"`
 	IngestionTime int64              `avro:"ingestion_time"`
+	SessionID     string             `avro:"session_id"`
 	UsuarioID     string             `avro:"usuario_id"`
-	Username      string             `avro:"username"`
+	Username      string              `avro:"username"`
 	Source        string             `avro:"source"`
 	Payload       acc_shm.StaticPage `avro:"payload"`
 }
