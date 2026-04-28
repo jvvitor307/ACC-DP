@@ -22,7 +22,6 @@ func buildEventSchema(eventName, payloadName string, payloadType reflect.Type) (
 			map[string]any{"name": "usuario_id", "type": "string"},
 			map[string]any{"name": "username", "type": "string"},
 			map[string]any{"name": "source", "type": "string"},
-			map[string]any{"name": "schema_version", "type": "int"},
 			map[string]any{"name": "payload", "type": payloadSchema},
 		},
 	}

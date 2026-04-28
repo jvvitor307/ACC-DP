@@ -9,7 +9,6 @@ type PhysicsEvent struct {
 	UsuarioID     string              `avro:"usuario_id"`
 	Username      string              `avro:"username"`
 	Source        string              `avro:"source"`
-	SchemaVersion int32               `avro:"schema_version"`
 	Payload       acc_shm.PhysicsPage `avro:"payload"`
 }
 
@@ -20,7 +19,6 @@ type GraphicsEvent struct {
 	UsuarioID     string               `avro:"usuario_id"`
 	Username      string               `avro:"username"`
 	Source        string               `avro:"source"`
-	SchemaVersion int32                `avro:"schema_version"`
 	Payload       acc_shm.GraphicsPage `avro:"payload"`
 }
 
@@ -31,6 +29,5 @@ type StaticEvent struct {
 	UsuarioID     string             `avro:"usuario_id"`
 	Username      string             `avro:"username"`
 	Source        string             `avro:"source"`
-	SchemaVersion int32              `avro:"schema_version"`
 	Payload       acc_shm.StaticPage `avro:"payload"`
 }

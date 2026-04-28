@@ -29,12 +29,12 @@ func New() *Service {
 	return &Service{now: time.Now}
 }
 
-func (s *Service) NormalizePhysics(page *acc_shm.PhysicsPage, identity Identity, schemaVersion int32) (*event.PhysicsEvent, error) {
+func (s *Service) NormalizePhysics(page *acc_shm.PhysicsPage, identity Identity) (*event.PhysicsEvent, error) {
 	if page == nil {
 		return nil, fmt.Errorf("normalize physics: page is nil")
 	}
 
-	meta := s.newMetadata(identity, schemaVersion, PhysicsSource, fmt.Sprintf("%d", page.PacketID))
+	meta := s.newMetadata(identity, PhysicsSource, fmt.Sprintf("%d", page.PacketID))
 
 	return &event.PhysicsEvent{
 		EventID:       meta.EventID,
@@ -43,17 +43,16 @@ func (s *Service) NormalizePhysics(page *acc_shm.PhysicsPage, identity Identity,
 		UsuarioID:     meta.UsuarioID,
 		Username:      meta.Username,
 		Source:        meta.Source,
-		SchemaVersion: meta.SchemaVersion,
 		Payload:       *page,
 	}, nil
 }
 
-func (s *Service) NormalizeGraphics(page *acc_shm.GraphicsPage, identity Identity, schemaVersion int32) (*event.GraphicsEvent, error) {
+func (s *Service) NormalizeGraphics(page *acc_shm.GraphicsPage, identity Identity) (*event.GraphicsEvent, error) {
 	if page == nil {
 		return nil, fmt.Errorf("normalize graphics: page is nil")
 	}
 
-	meta := s.newMetadata(identity, schemaVersion, GraphicsSource, fmt.Sprintf("%d", page.PacketID))
+	meta := s.newMetadata(identity, GraphicsSource, fmt.Sprintf("%d", page.PacketID))
 
 	return &event.GraphicsEvent{
 		EventID:       meta.EventID,
@@ -62,17 +61,16 @@ func (s *Service) NormalizeGraphics(page *acc_shm.GraphicsPage, identity Identit
 		UsuarioID:     meta.UsuarioID,
 		Username:      meta.Username,
 		Source:        meta.Source,
-		SchemaVersion: meta.SchemaVersion,
 		Payload:       *page,
 	}, nil
 }
 
-func (s *Service) NormalizeStatic(page *acc_shm.StaticPage, identity Identity, schemaVersion int32) (*event.StaticEvent, error) {
+func (s *Service) NormalizeStatic(page *acc_shm.StaticPage, identity Identity) (*event.StaticEvent, error) {
 	if page == nil {
 		return nil, fmt.Errorf("normalize static: page is nil")
 	}
 
-	meta := s.newMetadata(identity, schemaVersion, StaticSource, uuid.NewString())
+	meta := s.newMetadata(identity, StaticSource, uuid.NewString())
 
 	return &event.StaticEvent{
 		EventID:       meta.EventID,
@@ -81,7 +79,6 @@ func (s *Service) NormalizeStatic(page *acc_shm.StaticPage, identity Identity, s
 		UsuarioID:     meta.UsuarioID,
 		Username:      meta.Username,
 		Source:        meta.Source,
-		SchemaVersion: meta.SchemaVersion,
 		Payload:       *page,
 	}, nil
 }
@@ -93,10 +90,9 @@ type metadata struct {
 	UsuarioID     string
 	Username      string
 	Source        string
-	SchemaVersion int32
 }
 
-func (s *Service) newMetadata(identity Identity, schemaVersion int32, source string, eventID string) metadata {
+func (s *Service) newMetadata(identity Identity, source string, eventID string) metadata {
 	nowMillis := s.now().UnixMilli()
 
 	return metadata{
@@ -106,6 +102,5 @@ func (s *Service) newMetadata(identity Identity, schemaVersion int32, source str
 		UsuarioID:     identity.UsuarioID,
 		Username:      identity.Username,
 		Source:        source,
-		SchemaVersion: schemaVersion,
 	}
 }

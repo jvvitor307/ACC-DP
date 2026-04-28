@@ -23,9 +23,8 @@ import (
 )
 
 const (
-	schemaVersion = int32(1)
-	userID        = "local-user"
-	username      = "local"
+	userID   = "local-user"
+	username = "local"
 )
 
 func main() {
@@ -138,7 +137,6 @@ func run(ctx context.Context) error {
 		serializer,
 		batcher,
 		identity,
-		schemaVersion,
 	)
 	if err != nil && !errors.Is(err, context.Canceled) {
 		return fmt.Errorf("run capture loop: %w", err)
@@ -189,7 +187,6 @@ func runCaptureLoop(
 	serializer *avro.Serializer,
 	batcher *batch.Batcher,
 	identity normalizer.Identity,
-	schemaVersion int32,
 ) error {
 	physicsTicker := time.NewTicker(cfg.PhysicsInterval)
 	defer physicsTicker.Stop()
@@ -201,15 +198,15 @@ func runCaptureLoop(
 	defer staticTicker.Stop()
 
 	capturePhysicsFn := func(runCtx context.Context) (int, error) {
-		return capturePhysics(runCtx, reader, normalizerService, serializer, batcher, cfg.TopicPhysics, identity, schemaVersion)
+		return capturePhysics(runCtx, reader, normalizerService, serializer, batcher, cfg.TopicPhysics, identity)
 	}
 
 	captureGraphicsFn := func(runCtx context.Context) (int, error) {
-		return captureGraphics(runCtx, reader, normalizerService, serializer, batcher, cfg.TopicGraphics, identity, schemaVersion)
+		return captureGraphics(runCtx, reader, normalizerService, serializer, batcher, cfg.TopicGraphics, identity)
 	}
 
 	captureStaticFn := func(runCtx context.Context) (int, error) {
-		return captureStatic(runCtx, reader, normalizerService, serializer, batcher, cfg.TopicStatic, identity, schemaVersion)
+		return captureStatic(runCtx, reader, normalizerService, serializer, batcher, cfg.TopicStatic, identity)
 	}
 
 	logger.Info("capture loop started")
@@ -282,7 +279,6 @@ func capturePhysics(
 	batcher *batch.Batcher,
 	topic string,
 	identity normalizer.Identity,
-	schemaVersion int32,
 ) (int, error) {
 	rawPage, err := reader.ReadPhysics(ctx)
 	if err != nil {
@@ -290,7 +286,7 @@ func capturePhysics(
 	}
 	page := acc_shm.ToPhysicsPage(rawPage)
 
-	event, err := normalizerService.NormalizePhysics(page, identity, schemaVersion)
+	event, err := normalizerService.NormalizePhysics(page, identity)
 	if err != nil {
 		return 0, fmt.Errorf("normalize physics: %w", err)
 	}
@@ -319,7 +315,6 @@ func captureGraphics(
 	batcher *batch.Batcher,
 	topic string,
 	identity normalizer.Identity,
-	schemaVersion int32,
 ) (int, error) {
 	rawPage, err := reader.ReadGraphics(ctx)
 	if err != nil {
@@ -327,7 +322,7 @@ func captureGraphics(
 	}
 	page := acc_shm.ToGraphicsPage(rawPage)
 
-	event, err := normalizerService.NormalizeGraphics(page, identity, schemaVersion)
+	event, err := normalizerService.NormalizeGraphics(page, identity)
 	if err != nil {
 		return 0, fmt.Errorf("normalize graphics: %w", err)
 	}
@@ -356,14 +351,13 @@ func captureStatic(
 	batcher *batch.Batcher,
 	topic string,
 	identity normalizer.Identity,
-	schemaVersion int32,
 ) (int, error) {
 	rawPage, err := reader.ReadStatic(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("read static: %w", err)
 	}
 	page := acc_shm.ToStaticPage(rawPage)
-	event, err := normalizerService.NormalizeStatic(page, identity, schemaVersion)
+	event, err := normalizerService.NormalizeStatic(page, identity)
 	if err != nil {
 		return 0, fmt.Errorf("normalize static: %w", err)
 	}
