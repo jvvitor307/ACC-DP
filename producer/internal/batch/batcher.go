@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"acc-dp/producer/internal/metrics"
 )
 
 // Message represents a single message to be batched and published.
@@ -33,6 +35,7 @@ type Batcher struct {
 	localBuffer   LocalBuffer
 	flushInterval time.Duration
 	logger        *zap.Logger
+	metrics       *metrics.Collector
 
 	mu      sync.Mutex
 	pending map[string][]Message
@@ -45,6 +48,7 @@ type Config struct {
 	FlushInterval time.Duration
 	Logger        *zap.Logger
 	LocalBuffer   LocalBuffer
+	Metrics       *metrics.Collector
 }
 
 // New creates a new Batcher. Call Start to begin the flush loop.
@@ -67,6 +71,7 @@ func New(publisher Publisher, cfg Config) (*Batcher, error) {
 		localBuffer:   cfg.LocalBuffer,
 		flushInterval: cfg.FlushInterval,
 		logger:        logger,
+		metrics:       cfg.Metrics,
 		pending:       make(map[string][]Message),
 		done:          make(chan struct{}),
 		closed:        make(chan struct{}),
@@ -131,6 +136,10 @@ func (b *Batcher) Enqueue(msg Message) error {
 	b.pending[msg.Topic] = append(b.pending[msg.Topic], msg)
 	b.mu.Unlock()
 
+	if b.metrics != nil {
+		b.metrics.IncEnqueued()
+	}
+
 	return nil
 }
 
@@ -168,6 +177,10 @@ func (b *Batcher) flush(ctx context.Context) {
 				zap.Error(err),
 			)
 
+			if b.metrics != nil {
+				b.metrics.IncPublishErrors()
+			}
+
 			if b.localBuffer != nil {
 				for _, m := range messages {
 					if storeErr := b.localBuffer.Append(m.Topic, m.Key, m.Payload); storeErr != nil {
@@ -176,11 +189,19 @@ func (b *Batcher) flush(ctx context.Context) {
 							zap.String("key", m.Key),
 							zap.Error(storeErr),
 						)
+
+						if b.metrics != nil {
+							b.metrics.IncBufferErrors()
+						}
 					}
 				}
 			}
 
 			continue
+		}
+
+		if b.metrics != nil {
+			b.metrics.AddDequeued(uint64(len(messages)))
 		}
 
 		b.logger.Debug("batch flushed",

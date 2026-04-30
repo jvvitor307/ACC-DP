@@ -8,6 +8,7 @@ import (
 
 	"acc-dp/producer/internal/batch"
 	"acc-dp/producer/internal/buffer/badger"
+	"acc-dp/producer/internal/metrics"
 )
 
 // RetryWorker is responsible for asynchronously draining the persistent local buffer
@@ -16,10 +17,10 @@ type RetryWorker struct {
 	publisher batch.Publisher
 	buffer    *badger.Buffer
 	logger    *zap.Logger
+	metrics   *metrics.Collector
 }
 
-// NewRetryWorker creates a new generic retry worker.
-func NewRetryWorker(pub batch.Publisher, buf *badger.Buffer, logger *zap.Logger) *RetryWorker {
+func NewRetryWorker(pub batch.Publisher, buf *badger.Buffer, logger *zap.Logger, m *metrics.Collector) *RetryWorker {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
@@ -28,6 +29,7 @@ func NewRetryWorker(pub batch.Publisher, buf *badger.Buffer, logger *zap.Logger)
 		publisher: pub,
 		buffer:    buf,
 		logger:    logger,
+		metrics:   m,
 	}
 }
 
@@ -88,7 +90,6 @@ func (w *RetryWorker) processIter(ctx context.Context) {
 			})
 		}
 
-		// Attempt to republish the batch.
 		err := w.publisher.PublishBatch(ctx, topic, batchMsgs)
 		if err != nil {
 			w.logger.Warn("retry backlog publish failed, keeping them in storage",
@@ -96,10 +97,14 @@ func (w *RetryWorker) processIter(ctx context.Context) {
 				zap.Int("count", len(batchMsgs)),
 				zap.Error(err),
 			)
+
+			if w.metrics != nil {
+				w.metrics.IncRetryErrors()
+			}
+
 			continue
 		}
 
-		// Upon success, acknowledge the messages to remove them from persistent storage.
 		successCount := 0
 		for _, m := range msgs {
 			if ackErr := w.buffer.Ack(m.ID); ackErr != nil {
@@ -110,6 +115,11 @@ func (w *RetryWorker) processIter(ctx context.Context) {
 			} else {
 				successCount++
 			}
+		}
+
+		if w.metrics != nil {
+			w.metrics.AddRetrySuccess(uint64(successCount))
+			w.metrics.AddDequeued(uint64(successCount))
 		}
 
 		w.logger.Info("successfully retried and removed backlog messages",

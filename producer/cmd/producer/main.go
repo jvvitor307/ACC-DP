@@ -16,6 +16,7 @@ import (
 	"acc-dp/producer/internal/broker/redpanda"
 	"acc-dp/producer/internal/buffer/badger"
 	"acc-dp/producer/internal/config"
+	"acc-dp/producer/internal/metrics"
 	"acc-dp/producer/internal/service/avro"
 	"acc-dp/producer/internal/service/normalizer"
 	"acc-dp/producer/internal/source/acc_shm"
@@ -26,6 +27,19 @@ const (
 	userID   = "local-user"
 	username = "local"
 )
+
+type backlogProvider struct {
+	batcher *batch.Batcher
+	buffer  *badger.Buffer
+}
+
+func (p backlogProvider) PendingCount() int {
+	return p.batcher.PendingCount()
+}
+
+func (p backlogProvider) BufferCount() int {
+	return p.buffer.Count()
+}
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -108,20 +122,31 @@ func run(ctx context.Context) error {
 	}()
 
 	adapter := batch.NewPublisherAdapter(publisher)
+	collector := metrics.NewCollector()
 	batcher, err := batch.New(adapter, batch.Config{
 		FlushInterval: cfg.FlushInterval,
 		Logger:        logger,
 		LocalBuffer:   localBuffer,
+		Metrics:       collector,
 	})
 	if err != nil {
 		return fmt.Errorf("create batcher: %w", err)
 	}
 
-	retryWorker := worker.NewRetryWorker(adapter, localBuffer, logger)
+	retryWorker := worker.NewRetryWorker(adapter, localBuffer, logger, collector)
 	go retryWorker.Start(ctx)
 
 	go batcher.Start(ctx)
 	defer batcher.Stop()
+
+	reporter := metrics.NewReporter(
+		collector,
+		backlogProvider{batcher: batcher, buffer: localBuffer},
+		logger,
+		30*time.Second,
+	)
+	go reporter.Start(ctx)
+	defer reporter.Wait()
 
 	identity := normalizer.Identity{
 		UsuarioID: userID,

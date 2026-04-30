@@ -103,6 +103,22 @@ func (b *Buffer) Ack(id string) error {
 	})
 }
 
+// Count returns the number of pending messages in the store.
+func (b *Buffer) Count() int {
+	var count int
+	_ = b.db.View(func(txn *badgerdb.Txn) error {
+		opts := badgerdb.DefaultIteratorOptions
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		for it.Rewind(); it.Valid(); it.Next() {
+			count++
+		}
+		return nil
+	})
+	return count
+}
+
 // Close gracefully stops the BadgerDB engine.
 func (b *Buffer) Close() error {
 	if b.db != nil {
