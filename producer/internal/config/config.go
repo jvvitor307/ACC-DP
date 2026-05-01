@@ -20,6 +20,7 @@ var requiredEnvKeys = []string{
 	"PRODUCER_FLUSH_INTERVAL",
 	"BADGER_PATH",
 	"USER_STORAGE_PATH",
+	"BACKEND_URL",
 }
 
 type Config struct {
@@ -34,6 +35,7 @@ type Config struct {
 	StaticInterval    time.Duration
 	BadgerPath        string
 	UserStoragePath   string
+	BackendURL        string
 	LogLevel          string
 }
 
@@ -84,6 +86,7 @@ func Load() (Config, error) {
 		StaticInterval:    staticInterval,
 		BadgerPath:        envValues["BADGER_PATH"],
 		UserStoragePath:   envValues["USER_STORAGE_PATH"],
+		BackendURL:        envValues["BACKEND_URL"],
 		LogLevel:          getEnv("PRODUCER_LOG_LEVEL", defaultLogLevel),
 	}, nil
 }
