@@ -46,14 +46,19 @@ Responsabilidades:
 - Publicar no Redpanda em lote a cada 1 segundo.
 - Persistir no BadgerDB quando nao conseguir enviar (retry assíncrono).
 
-Submodulos sugeridos:
+Submodulos implementados:
 
 - `internal/source/acc_shm` (leitura shared memory)
-- `internal/avro` (serializacao + registro/lookup de schema)
-- `internal/broker/redpanda` (producer kafka API compatível)
+- `internal/service/avro` (serializacao + registro/lookup de schema)
+- `internal/service/normalizer` (normalizacao de eventos + session tracking)
+- `internal/broker/redpanda` (producer kafka API compativel)
 - `internal/buffer/badger` (durable local buffer)
-- `internal/user` (cadastro e selecao de usuario)
+- `internal/user` (cadastro, login e selecao de usuario via backend + cache local)
 - `internal/batch` (flush de 1s)
+- `internal/worker` (retry assincrono de eventos em buffer)
+- `internal/config` (carregamento de env vars)
+- `internal/domain/event` (modelos de dominio dos eventos)
+- `internal/metrics` (coleta e report de metricas)
 
 ### 4.2 Redpanda
 
@@ -169,15 +174,38 @@ Consumer (5 minutos):
 
 ## 7) Sistema de usuario no Producer
 
-Escopo simples (local):
+Integracao com backend auth + cache local:
 
-- Cadastro com `nome` e `username`.
-- Seletor de usuario ativo antes de iniciar captura.
-- Usuario ativo entra como metadado em todos os eventos.
+- Cadastro via CLI: `producer user register --email <email> --display-name <nome> --password <senha>` chama `POST /auth/register` no backend e persiste usuario no cache local (`users.json`).
+- Login via CLI: `producer user login <email>` chama `POST /auth/login` no backend, armazena identidade no cache local e define como ativo.
+- Troca de usuario: `producer user switch <email>` (alias para login). Se o producer estiver rodando, o watcher detecta a mudanca no `users.json` via polling a cada 5s e atualiza o usuario ativo sem reiniciar.
+- Consulta: `producer user list` lista usuarios em cache com marcador de ativo; `producer user whoami` mostra o usuario ativo atual.
 
-Persistencia sugerida:
+Submodulos implementados:
 
-- Arquivo local simples (`users.json`) ou BadgerDB em namespace separado.
+- `internal/user/model.go` — structs `User` e `Cache` para persistencia JSON.
+- `internal/user/client.go` — cliente HTTP para `POST /auth/register` e `POST /auth/login` no backend.
+- `internal/user/store.go` — cache local em `users.json` com escrita atomica (`*.tmp` + `os.Rename`), suportando `UpsertUser`, `SetActive`, `Active`, `List`, `Reload`.
+- `internal/user/watcher.go` — poller de arquivo que detecta mudancas no usuario ativo em runtime.
+- `internal/user/store_test.go` — 8 testes cobrindo CRUD, persistencia entre restarts, deteccao de mudanca externa e escrita atomica.
+
+Comandos CLI (cobra):
+
+- `producer run` — inicia captura com usuario ativo do cache.
+- `producer user register` — registra usuario no backend e salva no cache.
+- `producer user login <email>` — autentica no backend, salva no cache.
+- `producer user switch <email>` — alias para login (troca usuario).
+- `producer user list` — lista usuarios em cache.
+- `producer user whoami` — mostra usuario ativo.
+
+Fluxo de startup do producer:
+
+1. Carrega configuracao (incluindo `USER_STORAGE_PATH` e `BACKEND_URL`).
+2. Abre cache local (`users.json`). Se nao existir, cria vazio.
+3. Busca usuario ativo no cache. Se nao houver, exige `producer user login` antes.
+4. Inicia watcher que faz polling do cache a cada 5s.
+5. Constroi `normalizer.Identity` a partir do usuario ativo.
+6. Captura dados com a identidade do usuario ativo, trocando automaticamente se o watcher detectar mudanca.
 
 ## 8) Particionamento e chaveamento
 
@@ -212,20 +240,30 @@ acc-data-platform/
 			service/auth/
 			repository/
 			database/migrations/
+			domain/
 		Dockerfile
 	producer/
-		cmd/producer/main.go
+		cmd/producer/
+			main.go
+			root.go
+			user_cmd.go
 		internal/
 			source/acc_shm/
-			avro/
+			service/avro/
+			service/normalizer/
 			broker/redpanda/
 			batch/
 			buffer/badger/
+			config/
+			domain/event/
+			metrics/
 			user/
-		schemas/
-			acc_physics.avsc
-			acc_graphics.avsc
-			acc_static.avsc
+				model.go
+				client.go
+				store.go
+				watcher.go
+				store_test.go
+			worker/
 	consumer/
 		cmd/consumer/main.go
 		internal/
@@ -246,7 +284,7 @@ acc-data-platform/
 2. Publicar 3 topicos Avro no Redpanda com batch de 1s.
 3. Registrar schemas no Schema Registry com compatibilidade backward.
 4. Consumir e gravar Avro no MinIO em janela de 5min, com path particionado.
-5. Implementar cadastro/selecao simples de usuario no producer.
+5. Implementar sistema de usuario integrado com backend auth (CLI cobra com `register`, `login`, `switch`, `list`, `whoami` + cache local em `users.json` + watcher para troca em runtime).
 6. Ativar fallback de envio com BadgerDB no producer.
 7. Subir backend auth com Postgres e endpoints de autenticacao.
 8. Publicar Swagger/OpenAPI do backend para teste e integracao.
@@ -281,10 +319,11 @@ Bibliotecas principais do producer:
 - `github.com/twmb/franz-go` (cliente Kafka para Redpanda)
 - `github.com/hamba/avro/v2` (serializacao Avro)
 - `github.com/dgraph-io/badger/v4` (buffer local resiliente)
-- `github.com/spf13/cobra` e `github.com/spf13/viper` (CLI e configuracao)
+- `github.com/spf13/cobra` (CLI com subcomandos: `run`, `user register`, `user login`, `user switch`, `user list`, `user whoami`)
 - `go.uber.org/zap` (logging)
 - `github.com/google/uuid` (identificadores)
 - `golang.org/x/sys` (suporte baixo nivel para Windows/shared memory)
+- `golang.org/x/term` (leitura de senha no terminal sem eco)
 
 Bibliotecas principais do consumer:
 

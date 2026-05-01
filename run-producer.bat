@@ -22,7 +22,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo Iniciando producer...
-go run ./producer/cmd/producer
+echo Iniciando ACC Data Platform...
+go run ./app
 
 endlocal
