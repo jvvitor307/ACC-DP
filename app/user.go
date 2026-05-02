@@ -9,6 +9,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/denisbrodbeck/machineid"
 	"golang.org/x/term"
 
 	"acc-dp/user"
@@ -112,11 +113,18 @@ func loginUser(scanner *bufio.Scanner) {
 
 	hostname, _ := os.Hostname()
 
+	mid, err := machineid.ProtectedID("acc-dp")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Erro ao obter machine ID: %v\n", err)
+		return
+	}
+
 	client := user.NewClient(backendURL())
 	result, err := client.Login(context.Background(), user.LoginInput{
-		Email:     email,
-		Password:  password,
-		MachineID: hostname,
+		Email:      email,
+		Password:   password,
+		MachineID:  mid,
+		DeviceName: hostname,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Erro ao fazer login: %v\n", err)

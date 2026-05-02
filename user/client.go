@@ -34,9 +34,10 @@ type RegisterResult struct {
 }
 
 type LoginInput struct {
-	Email     string `json:"email"`
-	Password  string `json:"password"`
-	MachineID string `json:"machine_id"`
+	Email      string `json:"email"`
+	Password   string `json:"password"`
+	MachineID  string `json:"machine_id"`
+	DeviceName string `json:"device_name"`
 }
 
 type LoginResult struct {
