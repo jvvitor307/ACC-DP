@@ -14,6 +14,8 @@ from src.window import WindowManager
 
 logger = logging.getLogger("acc-dp-consumer")
 
+_COMMIT_INTERVAL_RECORDS = 500
+
 
 def run(settings: Settings) -> None:
     consumer = TopicConsumer(settings.kafka)
@@ -22,6 +24,11 @@ def run(settings: Settings) -> None:
 
     consumer.subscribe()
     consumer.running = True
+
+    if not consumer.wait_for_assignment(timeout=30.0):
+        logger.error("timed out waiting for partition assignment")
+        consumer.close()
+        return
 
     def _shutdown(signum: int, frame: FrameType | None) -> None:
         logger.info("received signal %s, shutting down...", signum)
@@ -36,6 +43,8 @@ def run(settings: Settings) -> None:
         settings.window.duration_seconds,
     )
 
+    records_since_commit = 0
+
     try:
         while consumer.running:
             record = consumer.poll(timeout=1.0)
@@ -44,15 +53,18 @@ def run(settings: Settings) -> None:
                 continue
 
             window_mgr.add(record)
+            records_since_commit += 1
 
             _flush_ready_windows(window_mgr, sink)
 
-            consumer.commit(asynchronous=True)
+            if records_since_commit >= _COMMIT_INTERVAL_RECORDS:
+                consumer.commit(asynchronous=True)
+                records_since_commit = 0
     finally:
         logger.info("flushing remaining windows...")
         for window in window_mgr.flush_all():
             sink.upload_window(window)
-        consumer.commit()
+        consumer.commit(asynchronous=False)
         consumer.close()
         logger.info("shutdown complete")
 

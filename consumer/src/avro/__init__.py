@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from confluent_kafka.schema_registry import SchemaRegistryClient
 from confluent_kafka.schema_registry.avro import AvroDeserializer
 from confluent_kafka.serialization import SerializationContext, MessageField
+
+logger = logging.getLogger("acc-dp-consumer.avro")
 
 
 @dataclass
@@ -26,10 +29,20 @@ class AvroDecoder:
             return None
 
         topic = msg.topic()
+        partition = msg.partition()
+        offset = msg.offset()
+
         ctx = SerializationContext(topic, MessageField.VALUE)
         try:
             value = self._deserializer(msg.value(), ctx)
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "deserialization failed topic=%s partition=%d offset=%d: %s",
+                topic,
+                partition,
+                offset,
+                exc,
+            )
             return None
 
         if value is None:
@@ -38,7 +51,7 @@ class AvroDecoder:
         return DeserializedRecord(
             value=value,
             topic=topic,
-            partition=msg.partition(),
-            offset=msg.offset(),
+            partition=partition,
+            offset=offset,
             key=msg.key().decode("utf-8") if msg.key() else None,
         )
