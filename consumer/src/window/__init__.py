@@ -15,6 +15,7 @@ class Window:
     start: datetime
     end: datetime
     records: list[dict] = field(default_factory=list)
+    schema_versions: set[int] = field(default_factory=set)
 
     @property
     def partition_path(self) -> str:
@@ -52,8 +53,8 @@ class WindowManager:
         self._buckets: dict[tuple[str, str], Window] = {}
 
     def add(self, record: DeserializedRecord) -> None:
-        usuario_id = record.value.get("usuario_id", "unknown")
-        event_time_ms = record.value.get("event_time", 0)
+        usuario_id = record.envelope.usuario_id or "unknown"
+        event_time_ms = record.envelope.event_time
         event_dt = datetime.fromtimestamp(event_time_ms / 1000.0, tz=timezone.utc)
         window_start = self._truncate(event_dt)
         window_end = datetime.fromtimestamp(
@@ -70,6 +71,7 @@ class WindowManager:
             )
 
         self._buckets[key].records.append(record.value)
+        self._buckets[key].schema_versions.add(record.schema_version)
 
     def flush_ready(self) -> list[Window]:
         now = time.time()
