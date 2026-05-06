@@ -9,7 +9,7 @@ from src.config import ConfigError, Settings
 from src.config.settings import load_settings
 from src.consumer import TopicConsumer
 from src.logging_setup import setup
-from src.sink import MinioSink
+from src.sink import DeltaSink
 from src.window import WindowManager
 
 logger = logging.getLogger("acc-dp-consumer")
@@ -20,7 +20,10 @@ _COMMIT_INTERVAL_RECORDS = 500
 def run(settings: Settings) -> None:
     consumer = TopicConsumer(settings.kafka)
     window_mgr = WindowManager(settings.window.duration_seconds)
-    sink = MinioSink(settings.minio)
+    sink = DeltaSink(settings.minio)
+    if not sink.health_check():
+        logger.error("MinIO health check failed — aborting")
+        return
 
     consumer.subscribe()
     consumer.running = True
@@ -63,15 +66,15 @@ def run(settings: Settings) -> None:
     finally:
         logger.info("flushing remaining windows...")
         for window in window_mgr.flush_all():
-            sink.upload_window(window)
+            sink.write_window(window)
         consumer.commit(asynchronous=False)
         consumer.close()
         logger.info("shutdown complete")
 
 
-def _flush_ready_windows(window_mgr: WindowManager, sink: MinioSink) -> None:
+def _flush_ready_windows(window_mgr: WindowManager, sink: DeltaSink) -> None:
     for window in window_mgr.flush_ready():
-        sink.upload_window(window)
+        sink.write_window(window)
 
 
 def main() -> None:

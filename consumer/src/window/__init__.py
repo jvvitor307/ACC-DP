@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import time
-import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -12,31 +11,32 @@ from src.avro import DeserializedRecord
 class Window:
     topic: str
     usuario_id: str
+    session_id: str
     start: datetime
     end: datetime
     records: list[dict] = field(default_factory=list)
     schema_versions: set[int] = field(default_factory=set)
 
     @property
-    def partition_path(self) -> str:
-        return (
-            f"bronze/{self._topic_label()}"
-            f"/usuario_id={self.usuario_id}"
-            f"/year={self.start.year}"
-            f"/month={self.start.month:02d}"
-            f"/day={self.start.day:02d}"
-            f"/hour={self.start.hour:02d}"
-        )
+    def table_path(self) -> str:
+        return f"bronze/{self._topic_label()}"
 
     @property
-    def filename(self) -> str:
-        start_min = self.start.strftime("%H%M")
-        end_min = self.end.strftime("%H%M")
-        return f"{start_min}_{end_min}_{uuid.uuid4().hex[:8]}.avro"
+    def partition_cols(self) -> list[str]:
+        return ["usuario_id", "session_id", "year", "month", "day", "hour"]
 
-    @property
-    def object_key(self) -> str:
-        return f"{self.partition_path}/{self.filename}"
+    def enriched_records(self) -> list[dict]:
+        result: list[dict] = []
+        for record in self.records:
+            row = dict(record)
+            row["usuario_id"] = self.usuario_id
+            row["session_id"] = self.session_id
+            row["year"] = self.start.year
+            row["month"] = self.start.month
+            row["day"] = self.start.day
+            row["hour"] = self.start.hour
+            result.append(row)
+        return result
 
     def _topic_label(self) -> str:
         mapping = {
@@ -50,10 +50,11 @@ class Window:
 class WindowManager:
     def __init__(self, window_duration_seconds: int):
         self._duration = window_duration_seconds
-        self._buckets: dict[tuple[str, str], Window] = {}
+        self._buckets: dict[tuple[str, str, str], Window] = {}
 
     def add(self, record: DeserializedRecord) -> None:
         usuario_id = record.envelope.usuario_id or "unknown"
+        session_id = record.envelope.session_id or "no_session"
         event_time_ms = record.envelope.event_time
         event_dt = datetime.fromtimestamp(event_time_ms / 1000.0, tz=timezone.utc)
         window_start = self._truncate(event_dt)
@@ -61,11 +62,12 @@ class WindowManager:
             window_start.timestamp() + self._duration, tz=timezone.utc
         )
 
-        key = (record.topic, usuario_id)
+        key = (record.topic, usuario_id, session_id)
         if key not in self._buckets:
             self._buckets[key] = Window(
                 topic=record.topic,
                 usuario_id=usuario_id,
+                session_id=session_id,
                 start=window_start,
                 end=window_end,
             )
@@ -76,7 +78,7 @@ class WindowManager:
     def flush_ready(self) -> list[Window]:
         now = time.time()
         ready: list[Window] = []
-        remaining: dict[tuple[str, str], Window] = {}
+        remaining: dict[tuple[str, str, str], Window] = {}
 
         for key, window in self._buckets.items():
             if window.end.timestamp() <= now:
