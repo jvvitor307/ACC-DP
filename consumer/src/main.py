@@ -10,7 +10,8 @@ from src.config.settings import load_settings
 from src.consumer import TopicConsumer
 from src.logging_setup import setup
 from src.sink import DeltaSink
-from src.window import WindowManager
+from src.wal import persist, recover_all, remove
+from src.window import Window, WindowManager
 
 logger = logging.getLogger("acc-dp-consumer")
 
@@ -32,6 +33,8 @@ def run(settings: Settings) -> None:
         logger.error("timed out waiting for partition assignment")
         consumer.close()
         return
+
+    _replay_wal(sink)
 
     def _shutdown(signum: int, frame: FrameType | None) -> None:
         logger.info("received signal %s, shutting down...", signum)
@@ -75,16 +78,32 @@ def run(settings: Settings) -> None:
         logger.info("shutdown complete")
 
 
+def _replay_wal(sink: DeltaSink) -> None:
+    pending = recover_all()
+    if not pending:
+        return
+    logger.info("replaying %d WAL window(s)...", len(pending))
+    for window in pending:
+        if window.records:
+            sink.write_window(window)
+    logger.info("WAL replay complete")
+
+
 def _flush_ready_windows(window_mgr: WindowManager, sink: DeltaSink) -> bool:
     windows = window_mgr.flush_ready()
     return _flush_window_list(windows, sink)
 
 
-def _flush_window_list(windows: list, sink: DeltaSink) -> bool:
+def _flush_window_list(windows: list[Window], sink: DeltaSink) -> bool:
     all_ok = True
     for window in windows:
-        if sink.write_window(window) is None and window.records:
+        if not window.records:
+            continue
+        wal_path = persist(window)
+        if sink.write_window(window) is None:
             all_ok = False
+        else:
+            remove(wal_path)
     return all_ok
 
 
