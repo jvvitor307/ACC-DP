@@ -52,29 +52,45 @@ def run(settings: Settings) -> None:
         while consumer.running:
             record = consumer.poll(timeout=1.0)
             if record is None:
-                _flush_ready_windows(window_mgr, sink)
+                if _flush_ready_windows(window_mgr, sink):
+                    _maybe_commit(consumer, records_since_commit)
+                    if records_since_commit >= _COMMIT_INTERVAL_RECORDS:
+                        records_since_commit = 0
                 continue
 
             window_mgr.add(record)
             records_since_commit += 1
 
-            _flush_ready_windows(window_mgr, sink)
-
-            if records_since_commit >= _COMMIT_INTERVAL_RECORDS:
-                consumer.commit(asynchronous=True)
-                records_since_commit = 0
+            if _flush_ready_windows(window_mgr, sink):
+                _maybe_commit(consumer, records_since_commit)
+                if records_since_commit >= _COMMIT_INTERVAL_RECORDS:
+                    records_since_commit = 0
     finally:
         logger.info("flushing remaining windows...")
-        for window in window_mgr.flush_all():
-            sink.write_window(window)
-        consumer.commit(asynchronous=False)
+        if _flush_window_list(window_mgr.flush_all(), sink):
+            consumer.commit(asynchronous=False)
+        else:
+            logger.warning("skipping final offset commit due to upload failures")
         consumer.close()
         logger.info("shutdown complete")
 
 
-def _flush_ready_windows(window_mgr: WindowManager, sink: DeltaSink) -> None:
-    for window in window_mgr.flush_ready():
-        sink.write_window(window)
+def _flush_ready_windows(window_mgr: WindowManager, sink: DeltaSink) -> bool:
+    windows = window_mgr.flush_ready()
+    return _flush_window_list(windows, sink)
+
+
+def _flush_window_list(windows: list, sink: DeltaSink) -> bool:
+    all_ok = True
+    for window in windows:
+        if sink.write_window(window) is None and window.records:
+            all_ok = False
+    return all_ok
+
+
+def _maybe_commit(consumer: TopicConsumer, records_since_commit: int) -> None:
+    if records_since_commit >= _COMMIT_INTERVAL_RECORDS:
+        consumer.commit(asynchronous=True)
 
 
 def main() -> None:
