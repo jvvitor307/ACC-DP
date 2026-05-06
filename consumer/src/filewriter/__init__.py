@@ -1,73 +1,45 @@
 from __future__ import annotations
 
-import io
+import json
 import logging
 from typing import Any
 
-import fastavro
-
-from src.filewriter.schema import build_event_schema
+import pyarrow as pa
 
 logger = logging.getLogger("acc-dp-consumer.filewriter")
 
-_TOPIC_EVENT_NAMES: dict[str, str] = {
-    "acc.physics.v1": "acc_physics_event",
-    "acc.graphics.v1": "acc_graphics_event",
-    "acc.static.v1": "acc_static_event",
-}
 
-
-class AvroWriter:
+class DeltaWriter:
     def __init__(self) -> None:
-        self._schema_cache: dict[str, Any] = {}
+        self._schema_cache: dict[str, pa.Schema] = {}
 
-    def write_window(self, topic: str, records: list[dict]) -> bytes:
+    def build_table(self, topic: str, records: list[dict]) -> pa.Table:
         if not records:
-            return b""
+            raise ValueError("cannot build table from empty records")
 
-        schema = self._resolve_schema(topic, records)
-        normalized = [_normalize(r) for r in records]
+        rows = [_normalize_row(r) for r in records]
 
-        buffer = io.BytesIO()
-        try:
-            fastavro.writer(buffer, schema, normalized, codec="deflate")
-        except Exception as exc:
-            logger.error(
-                "avro write failed topic=%s records=%d: %s",
-                topic,
-                len(normalized),
-                exc,
-            )
-            raise
+        if topic not in self._schema_cache:
+            self._schema_cache[topic] = pa.Table.from_pylist(rows[:1]).schema
 
-        result = buffer.getvalue()
+        table = pa.Table.from_pylist(rows, schema=self._schema_cache[topic])
+
         logger.debug(
-            "wrote avro topic=%s records=%d bytes=%d schema_fields=%d",
+            "built arrow table topic=%s rows=%d cols=%d",
             topic,
-            len(normalized),
-            len(result),
-            len(schema.get("fields", [])),
+            table.num_rows,
+            table.num_columns,
         )
-        return result
-
-    def _resolve_schema(self, topic: str, records: list[dict]) -> dict[str, Any]:
-        if topic in self._schema_cache:
-            return self._schema_cache[topic]
-
-        event_name = _TOPIC_EVENT_NAMES.get(topic, topic.replace(".", "_"))
-        schema = build_event_schema(event_name, records)
-        parsed = fastavro.parse_schema(schema)
-        self._schema_cache[topic] = parsed
-
-        field_count = len(schema.get("fields", []))
-        logger.info("built schema for topic=%s event=%s fields=%d", topic, event_name, field_count)
-        return parsed
+        return table
 
 
-def _normalize(record: dict) -> dict[str, Any]:
+def _normalize_row(record: dict) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for key, value in record.items():
-        out[key] = _normalize_value(value)
+        if key == "payload":
+            out[key] = json.dumps(value, default=str) if isinstance(value, (dict, list)) else str(value)
+        else:
+            out[key] = _normalize_value(value)
     return out
 
 
